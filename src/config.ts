@@ -92,6 +92,10 @@ const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 const CONTROL_OR_SPACE = /[\u0000-\u0020\u007f-\u009f]/;
 // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
 const CONTROL_OR_BREAK = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+// Lago API keys are printable ASCII; this also rules out every Unicode space and invisible character.
+const PRINTABLE_ASCII = /^[\x21-\x7e]+$/;
+// Node's setTimeout treats anything above 2^31-1 ms as 1 ms.
+const MAX_TIMEOUT_MS = 2147483647;
 const MAX_STATEMENT_BYTES = 256;
 
 function fail(route: string | null, reason: string): never {
@@ -184,8 +188,8 @@ function validateTimeouts(v: unknown): NormalizedConfig["timeouts"] {
   for (const key of Object.keys(DEFAULT_TIMEOUTS) as (keyof typeof DEFAULT_TIMEOUTS)[]) {
     const value = v?.[key];
     if (value === undefined) continue;
-    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
-      fail(null, `timeouts.${key} must be a positive integer`);
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMEOUT_MS) {
+      fail(null, `timeouts.${key} must be a positive integer of at most ${MAX_TIMEOUT_MS} ms`);
     }
     out[key] = value;
   }
@@ -279,8 +283,7 @@ export function validateConfig(c: LagoX402Config): NormalizedConfig {
   if (!isRecord(c)) fail(null, "config must be an object");
   const apiUrl = validateApiUrl(c.apiUrl);
   const key = c.apiKey;
-  if (typeof key !== "string" || key.length === 0 || CONTROL_OR_SPACE.test(key))
-    fail(null, "apiKey is invalid");
+  if (typeof key !== "string" || !PRINTABLE_ASCII.test(key)) fail(null, "apiKey is invalid");
   if (!nonEmptyString(c.connectionCode)) fail(null, "connectionCode must be a non-empty string");
   const origin = validateOrigin(c.origin);
   const signInStatement = validateStatement(c.signInStatement);

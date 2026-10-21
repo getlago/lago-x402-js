@@ -257,8 +257,8 @@ describe("mapCreditPurchaseRefusal (E8)", () => {
     expect(mapCreditPurchaseRefusal(v({ base: ["brand_new_reason"] }), 1)).toMatchObject(unavailable);
   });
 
-  it("a payment error whose codes are all unsafe or absent is unavailable, never a challenge", () => {
-    expect(mapCreditPurchaseRefusal(v({ payment: ["has space"] }), 1)).toMatchObject(unavailable);
+  it("a purely-payment refusal whose codes are all unsafe is a challenge without an error string", () => {
+    expect(mapCreditPurchaseRefusal(v({ payment: ["has space"] }), 1)).toEqual({ kind: "challenge" });
     expect(mapCreditPurchaseRefusal({ status: 422, body: validationErrors({}) }, 1)).toMatchObject(
       unavailable,
     );
@@ -316,6 +316,18 @@ describe("mapCreditPurchaseRefusal (E8)", () => {
         1,
       ),
     ).toMatchObject({ status: 409 });
+  });
+
+  it.each([
+    ["an unsafe-valued extra field", { payment: ["x"], wallet: ["has space"] }],
+    ["an unsafe-keyed extra field", { payment: ["x"], "weird-key": ["y"] }],
+    ["an empty payment array", { payment: [] }],
+    ["an empty extra array", { payment: ["x"], wallet: [] }],
+    ["an unsafe-keyed base", { base: ["buyer_not_recognized"], "weird-key": ["y"] }],
+  ])("fails closed (503 unavailable + report) on %s", (_name, details) => {
+    const d = mapCreditPurchaseRefusal(v(details), 1);
+    expect(d).toMatchObject(unavailable);
+    expect(d.kind === "refuse" && d.report).toBeInstanceOf(LagoApiError);
   });
 
   it("an E8 answer that is not a validation envelope never challenges", () => {

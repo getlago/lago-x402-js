@@ -79,9 +79,25 @@ function codesOf(answer: LagoAnswer): Codes {
   return { validation: answer.status === 422 && code === "validation_errors", errorCodes };
 }
 
-function onlyField(errorCodes: Record<string, string[]>, field: string): string[] | null {
-  const keys = Object.keys(errorCodes);
-  return keys.length === 1 && keys[0] === field ? (errorCodes[field] ?? null) : null;
+/** The RAW `error_details` entries. The sanitizer silently drops unreadable fields, so shape
+ * decisions ("purely payment", "only base") are made here, on what Lago actually sent; the
+ * sanitized codes only supply strings. An unreadable shape must fail closed. */
+function rawDetails(body: unknown): [string, unknown][] {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return [];
+  const details = (body as Record<string, unknown>).error_details;
+  if (typeof details !== "object" || details === null || Array.isArray(details)) return [];
+  return Object.entries(details);
+}
+
+function rawFieldsAre(body: unknown, allowed: readonly string[]): boolean {
+  const entries = rawDetails(body);
+  return (
+    entries.length > 0 && entries.every(([k, v]) => allowed.includes(k) && Array.isArray(v) && v.length > 0)
+  );
+}
+
+function onlyField(body: unknown, errorCodes: Record<string, string[]>, field: string): string[] | null {
+  return rawFieldsAre(body, [field]) ? (errorCodes[field] ?? null) : null;
 }
 
 function unavailable(endpoint: LagoEndpoint, answer: LagoAnswer): Decision {
@@ -113,7 +129,7 @@ export function mapGateCheckRefusal(answer: LagoAnswer): Decision {
     if (siwx?.[0] !== undefined) {
       return { kind: "refuse", status: 401, error: "sign_in_rejected", reason: siwx[0] };
     }
-    const base = onlyField(errorCodes, "base")?.[0];
+    const base = onlyField(answer.body, errorCodes, "base")?.[0];
     if (base === BUYER_NOT_RECOGNIZED) return buyerNotRecognized;
     if (base !== undefined && E7_PENDING_BASE_CODES.includes(base)) return pending();
   }
@@ -132,9 +148,7 @@ export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): De
   const { validation, errorCodes } = codesOf(answer);
   if (!validation) return unavailable("credit_purchases", answer);
 
-  const fields = Object.keys(errorCodes);
-  const purelyPayment = fields.length > 0 && fields.every((f) => PAYMENT_FIELDS.includes(f));
-  if (purelyPayment) {
+  if (rawFieldsAre(answer.body, PAYMENT_FIELDS)) {
     if (errorCodes.payment?.includes(RECORDED_AS_INVOICE_PAYMENT)) {
       return { kind: "refuse", status: 409, error: "payment_already_used", report: report() };
     }
@@ -146,7 +160,7 @@ export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): De
     return first === undefined ? { kind: "challenge" } : { kind: "challenge", error: first };
   }
 
-  const base = onlyField(errorCodes, "base")?.[0];
+  const base = onlyField(answer.body, errorCodes, "base")?.[0];
   if (base === BUYER_NOT_RECOGNIZED) return buyerNotRecognized;
   if (base !== undefined && E8_PENDING_BASE_CODES.includes(base)) return pending();
   if (base === CREDIT_GRANT_FAILED) {

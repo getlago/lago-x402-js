@@ -18,6 +18,7 @@ import { createLagoX402, handleRequest, hasRoute, type LagoX402 } from "../../sr
 import { startFakeLago, type FakeAnswer, type FakeLago, type FakeRoute } from "../support/fake-lago.js";
 import {
   billableMetric,
+  evmRequirement,
   forbidden,
   gateCheckChallenge,
   gateCheckPass,
@@ -44,6 +45,7 @@ const E7_BODY =
   '{"gate_check":{"connection_code":"conn_test","plan_code":"agents_plan","billable_metric_code":"tokens",' +
   '"wallet_code":"agents_wallet","amount_cents":500,"estimated_call_cost_cents":2}}';
 const NO_SIGN_IN = "this Lago does not support sign-in-with-x; it needs lago-api with INT-331";
+const UNEXPECTED_E7 = "Lago's gate_checks answer has an unexpected shape";
 /** Background retries in tests: 10 ms, 20 ms, 40 ms, … */
 const FAST = { bootRetryBaseMs: 10 };
 
@@ -240,13 +242,36 @@ describe("checkRoute", () => {
       { status: 200, body: gateCheckChallenge({ sign_in_chains: ["cosmos:cosmoshub-4"] }) },
       "Lago's challenge offers no sign-in chain this middleware can render",
     ],
-    [
-      "challenge with malformed requirements",
-      { status: 200, body: gateCheckChallenge({ requirements: [] }) },
-      NO_SIGN_IN,
-    ],
   ])("an E7 %s is a definitive refusal", async (_label, answer, reason) => {
     answers("gate_checks", answer);
+    expect(await check()).toStrictEqual({ ok: false, definitive: true, reason });
+  });
+
+  // R23: only a challenge (requirements array) without a sign_in_chains array is a Lago without
+  // INT-331; any other unreadable answer is not something upgrading lago-api would fix.
+  const challengeWithout = (chains: "absent" | null) => {
+    const body = gateCheckChallenge();
+    if (chains === "absent") delete (body.gate_check as Partial<typeof body.gate_check>).sign_in_chains;
+    else body.gate_check.sign_in_chains = chains;
+    return body;
+  };
+  it.each([
+    ["a challenge without sign_in_chains", challengeWithout("absent"), NO_SIGN_IN],
+    ["a challenge with sign_in_chains: null", challengeWithout(null), NO_SIGN_IN],
+    [
+      "a pass without external_subscription_id",
+      gateCheckPass({ external_subscription_id: null }),
+      UNEXPECTED_E7,
+    ],
+    ["a challenge with requirements: []", gateCheckChallenge({ requirements: [] }), UNEXPECTED_E7],
+    [
+      "a challenge with a malformed requirement entry",
+      gateCheckChallenge({ requirements: [{ ...evmRequirement(), amount_atomic: "5.00" }] }),
+      UNEXPECTED_E7,
+    ],
+    ["an answer without gate_check", { x402_settlement: {} }, UNEXPECTED_E7],
+  ])("an unreadable E7 200 (%s) is refused with the right reason", async (_label, body, reason) => {
+    answers("gate_checks", { status: 200, body });
     expect(await check()).toStrictEqual({ ok: false, definitive: true, reason });
   });
 

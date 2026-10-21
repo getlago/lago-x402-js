@@ -30,6 +30,7 @@ type Report = (err: Error, where: LagoX402ErrorWhere) => void;
 /** Lago codes and error names a reason may quote (context §3). */
 const SAFE_CODE = /^[A-Za-z0-9_.]{1,64}$/;
 const NO_SIGN_IN = "this Lago does not support sign-in-with-x; it needs lago-api with INT-331";
+const UNEXPECTED_E7 = "Lago's gate_checks answer has an unexpected shape";
 
 const OK: CheckResult = { ok: true };
 const definitive = (reason: string): CheckResult => ({ ok: false, definitive: true, reason });
@@ -107,6 +108,13 @@ async function checkMetric(
   return OK;
 }
 
+/** A challenge (a `requirements` array) without a `sign_in_chains` array: what lago-api answers
+ * before INT-331 (ruling R23). Any other unreadable E7 is not fixed by upgrading lago-api. */
+function lacksSignIn(body: unknown): boolean {
+  const answer = isPlainObject(body) ? body.gate_check : undefined;
+  return isPlainObject(answer) && Array.isArray(answer.requirements) && !Array.isArray(answer.sign_in_chains);
+}
+
 async function checkGate(
   client: LagoClient,
   config: NormalizedConfig,
@@ -130,7 +138,7 @@ async function checkGate(
   try {
     gate = parseGateCheck(answer.body);
   } catch (err) {
-    if (err instanceof LagoApiError) return definitive(NO_SIGN_IN);
+    if (err instanceof LagoApiError) return definitive(lacksSignIn(answer.body) ? NO_SIGN_IN : UNEXPECTED_E7);
     throw err;
   }
   if (gate.kind === "pass") return definitive("Lago passed a request without a sign-in");

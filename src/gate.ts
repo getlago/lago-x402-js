@@ -279,12 +279,18 @@ export class Gate {
   }
 
   /** E8's body. `payment` is a deep copy with `resource` reset to this route's 402 resource and
-   * `extensions.bazaar` dropped (no route is discoverable yet); every other key keeps its
-   * position and value. `payment_requirements` is `accepted` exactly as the agent sent it. */
+   * `extensions.bazaar` set to the route's rendered extension (deleted when the route is not
+   * discoverable, whatever the agent sent); every other key keeps its position and value. `payment_requirements` is `accepted` exactly as the agent sent it. */
   #purchaseBody(route: NormalizedRoute, req: GateRequest, payment: PaymentPayload): unknown {
     const forwarded = JSON.parse(JSON.stringify(payment)) as Record<string, unknown>;
     forwarded.resource = this.#resource(route, req);
-    if (isPlainObject(forwarded.extensions)) delete forwarded.extensions.bazaar;
+    if (route.bazaar !== undefined) {
+      const extensions = isPlainObject(forwarded.extensions) ? forwarded.extensions : {};
+      extensions.bazaar = structuredClone(route.bazaar);
+      forwarded.extensions = extensions;
+    } else if (isPlainObject(forwarded.extensions)) {
+      delete forwarded.extensions.bazaar;
+    }
     return {
       credit_purchase: {
         connection_code: this.#config.connectionCode,
@@ -381,7 +387,10 @@ export class Gate {
     const header = paymentRequiredHeader({
       resource,
       accepts: menu.accepts,
-      extensions: { [SIGN_IN_WITH_X]: signIn },
+      extensions: {
+        [SIGN_IN_WITH_X]: signIn,
+        ...(route.bazaar === undefined ? {} : { bazaar: structuredClone(route.bazaar) }),
+      },
       ...(error === undefined ? {} : { error }),
     });
     return {

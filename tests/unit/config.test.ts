@@ -90,12 +90,12 @@ describe("validateConfig: normalization", () => {
           timeouts: { gateCheckMs: 1 },
           signInStatement: "Hi \u{1F600}",
         },
-        { discoverable: true, discovery: { a: 1 } },
+        { discoverable: true, discovery: { method: "GET" } },
       ),
     );
     expect(n.timeouts.gateCheckMs).toBe(1);
     expect(n.timeouts.eventMs).toBe(10000);
-    expect(n.routes.get("generate")!.discovery).toEqual({ a: 1 });
+    expect(n.routes.get("generate")!.discovery).toEqual({ method: "GET" });
     for (const o of ["http://127.0.0.1:8080", "http://[::1]:8080"]) {
       expect(() => validateConfig(config({ origin: o }))).not.toThrow();
     }

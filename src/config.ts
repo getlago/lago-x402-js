@@ -1,11 +1,30 @@
 /** Public config types and the local validation that runs before any network call.
  * Error messages name routes but never echo a config value (the API key least of all). */
 
+import { deepFreeze, renderBazaar, validateDiscovery, validateResourceMetadata } from "./bazaar.js";
 import { LagoX402ConfigError } from "./errors.js";
 import { DEFAULT_SIGN_IN_STATEMENT } from "./wire.js";
 
-/** Placeholder: a later task replaces it with the Bazaar discovery shape and validates it. */
-export type LagoX402Discovery = Record<string, unknown>;
+/** How a discoverable route is called, for the x402 Bazaar. Static routes only: `method` is
+ * declared here, never read from a request, and there are no path parameters. */
+interface DiscoveryOutput {
+  example?: unknown;
+  schema?: Record<string, unknown>;
+}
+export type LagoX402Discovery =
+  | {
+      method: "GET" | "HEAD" | "DELETE";
+      queryParams?: Record<string, unknown>;
+      inputSchema?: Record<string, unknown>;
+      output?: DiscoveryOutput;
+    }
+  | {
+      method: "POST" | "PUT" | "PATCH";
+      bodyType: "json" | "form-data" | "text";
+      body?: Record<string, unknown>;
+      inputSchema?: Record<string, unknown>;
+      output?: DiscoveryOutput;
+    };
 
 export type LagoX402ErrorWhere = "boot" | "gate.check" | "gate.purchase" | "usage.extract" | "usage.send";
 
@@ -66,6 +85,8 @@ export interface NormalizedRoute {
   };
   readonly discoverable: boolean;
   readonly discovery?: LagoX402Discovery;
+  /** The rendered `bazaar` extension of a discoverable route (pure config, rendered once). */
+  readonly bazaar?: Readonly<Record<string, unknown>>;
 }
 
 export interface NormalizedConfig {
@@ -249,13 +270,15 @@ function validateRoute(name: string, raw: unknown): NormalizedRoute {
     }
   }
 
+  validateResourceMetadata(name, resource);
+
   if (raw.discoverable !== undefined && typeof raw.discoverable !== "boolean") {
     fail(name, "discoverable must be a boolean");
   }
   const discoverable = raw.discoverable === true;
-  if (raw.discovery !== undefined && !isRecord(raw.discovery)) fail(name, "discovery must be an object");
   if (discoverable && raw.discovery === undefined)
     fail(name, "discoverable routes require a discovery object");
+  const discovery = raw.discovery === undefined ? undefined : validateDiscovery(name, raw.discovery);
 
   const route: NormalizedRoute = {
     name,
@@ -273,9 +296,8 @@ function validateRoute(name: string, raw: unknown): NormalizedRoute {
     }),
     resource: Object.freeze(resource),
     discoverable,
-    ...(raw.discovery !== undefined
-      ? { discovery: structuredClone(raw.discovery) as LagoX402Discovery }
-      : {}),
+    ...(discovery === undefined ? {} : { discovery }),
+    ...(discoverable && discovery !== undefined ? { bazaar: deepFreeze(renderBazaar(discovery)) } : {}),
   };
   return Object.freeze(route);
 }

@@ -5,10 +5,12 @@ import { inspect } from "node:util";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { safeBase64Encode } from "@x402/core/utils";
+import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   validateConfig,
   type LagoX402Config,
+  type LagoX402Discovery,
   type LagoX402ErrorWhere,
   type LagoX402Route,
 } from "../../src/config.js";
@@ -95,6 +97,7 @@ function setup(
     report?: GateDeps["report"];
     billing?: GateDeps["billing"];
     resource?: LagoX402Route["resource"];
+    discovery?: LagoX402Discovery;
   } = {},
 ) {
   const config = validateConfig({
@@ -116,6 +119,7 @@ function setup(
           paidTopUpMaxAmountCents: 10000,
         },
         resource: o.resource ?? { description: "Generate text", mimeType: "application/json" },
+        ...(o.discovery === undefined ? {} : { discoverable: true, discovery: o.discovery }),
       },
     },
     ...(o.timeouts ? { timeouts: o.timeouts } : {}),
@@ -1319,5 +1323,139 @@ describe("security", () => {
         expect(text).not.toContain(secret);
       }
     }
+  });
+});
+
+describe("bazaar", () => {
+  const DISCOVERY: LagoX402Discovery = {
+    method: "POST",
+    bodyType: "json",
+    body: { prompt: "Write a haiku" },
+    inputSchema: { properties: { prompt: { type: "string" } }, required: ["prompt"] },
+    output: { example: { text: "An old silent pond" } },
+  };
+  const OFFICIAL = bazaarResourceServerExtension.enrichDeclaration!(
+    declareDiscoveryExtension({
+      method: "POST",
+      bodyType: "json",
+      input: DISCOVERY.body,
+      inputSchema: DISCOVERY.inputSchema,
+      output: DISCOVERY.output,
+    } as Parameters<typeof declareDiscoveryExtension>[0]).bazaar,
+    { method: "POST", adapter: { getPath: () => "/x" } },
+  );
+
+  it("every 402 of a discoverable route carries the bazaar extension after sign-in-with-x", async () => {
+    const { handle, reports } = setup({ discovery: DISCOVERY });
+
+    const first = await handle();
+    const pr = read402(first);
+    expect(Object.keys(pr.extensions!)).toEqual([SIGN_IN_WITH_X, "bazaar"]);
+    expect(pr.extensions!.bazaar).toStrictEqual(OFFICIAL);
+
+    // A 402 that answers a sign-in the funds cannot cover carries it too.
+    const proof = await signIn(evmAgent(), first);
+    const second = read402(await handle({ "SIGN-IN-WITH-X": proof }));
+    expect(Object.keys(second.extensions!)).toEqual([SIGN_IN_WITH_X, "bazaar"]);
+    expect(second.extensions!.bazaar).toStrictEqual(OFFICIAL);
+    expect(reports).toEqual([]);
+  });
+
+  it("a stale payment's fresh 402 carries it too", async () => {
+    const { handle } = setup({ discovery: DISCOVERY });
+    const { header } = await paidHeader(handle);
+    answers("gate_checks", challengeWith(evmRequirement({ amountCents: 700 })));
+
+    const pr = read402(await handle({ "PAYMENT-SIGNATURE": header }));
+
+    expect(pr.error).toBeDefined();
+    expect(pr.extensions!.bazaar).toStrictEqual(OFFICIAL);
+  });
+
+  it("each 402 has its own copy: nothing a response holds leaks into the next one", async () => {
+    const { handle, route } = setup({ discovery: DISCOVERY });
+    const before = JSON.stringify(route.bazaar);
+
+    const a = responded(await handle());
+    const b = responded(await handle());
+
+    expect(a.headers["PAYMENT-REQUIRED"].length).toBeGreaterThan(0);
+    expect(JSON.stringify(route.bazaar)).toBe(before);
+    expect(read402(a).extensions!.bazaar).toStrictEqual(read402(b).extensions!.bazaar);
+  });
+
+  it("a route that is not discoverable sends no bazaar", async () => {
+    const { handle } = setup();
+    expect(Object.keys(read402(await handle()).extensions!)).toEqual([SIGN_IN_WITH_X]);
+  });
+
+  it("accepts[].amount is the top-up (the listed price) in atomic units", async () => {
+    const { handle, route } = setup({ discovery: DISCOVERY });
+    const pr = read402(await handle());
+    expect(pr.accepts.length).toBeGreaterThan(0);
+    for (const accepted of pr.accepts) {
+      expect(accepted.amount).toBe(String(route.topUpAmountCents * 10 ** 4));
+    }
+  });
+
+  it("an agent-rewritten bazaar and resource are reset to the route's before E8", async () => {
+    const { handle, reports } = setup({ discovery: DISCOVERY });
+    const { header } = await paidHeader(handle, (payment) => {
+      payment.resource = { url: "https://attacker.example/elsewhere", description: "spoofed" };
+      payment.extensions = {
+        ...payment.extensions,
+        bazaar: { info: { input: { type: "http", method: "GET" } }, schema: {} },
+        another: { keep: "me" },
+      };
+    });
+
+    served(await handle({ "PAYMENT-SIGNATURE": header }));
+
+    const sent = (e8()[0].json as { credit_purchase: { payment: Record<string, unknown> } }).credit_purchase
+      .payment;
+    expect(sent.resource).toStrictEqual(RESOURCE);
+    expect(sent.extensions).toStrictEqual({
+      ...(decoded(header).extensions as object),
+      bazaar: OFFICIAL,
+    });
+    // The agent's bazaar stays where it was; the other extensions are untouched and in place.
+    expect(Object.keys(sent.extensions as object)).toEqual([SIGN_IN_WITH_X, "bazaar", "another"]);
+    expect(e8()[0].rawBody).not.toMatch(/attacker|spoofed/);
+    expect(reports).toEqual([]);
+  });
+
+  it("an agent that sent no extensions gets the bazaar extension created", async () => {
+    const { handle } = setup({ discovery: DISCOVERY });
+    const { header } = await paidHeader(handle, (payment) => {
+      delete payment.extensions;
+    });
+    expect(decoded(header).extensions).toBeUndefined();
+
+    served(await handle({ "PAYMENT-SIGNATURE": header }));
+
+    const sent = (e8()[0].json as { credit_purchase: { payment: Record<string, unknown> } }).credit_purchase
+      .payment;
+    expect(sent.extensions).toStrictEqual({ bazaar: OFFICIAL });
+    expect(Object.keys(sent)).toEqual([...Object.keys(decoded(header)), "extensions"]);
+  });
+
+  it("a non-discoverable route strips an agent-added bazaar before E8 and creates nothing", async () => {
+    const { handle } = setup();
+    const { header } = await paidHeader(handle, (payment) => {
+      payment.extensions = { ...payment.extensions, bazaar: OFFICIAL as Record<string, unknown> };
+    });
+    served(await handle({ "PAYMENT-SIGNATURE": header }));
+    const sent = (e8()[0].json as { credit_purchase: { payment: Record<string, unknown> } }).credit_purchase
+      .payment;
+    expect(Object.keys(sent.extensions as object)).toEqual([SIGN_IN_WITH_X]);
+
+    const none = await paidHeader(handle, (payment) => {
+      delete payment.extensions;
+    });
+    lago.requests.length = 0;
+    served(await handle({ "PAYMENT-SIGNATURE": none.header }));
+    const bare = (e8()[0].json as { credit_purchase: { payment: Record<string, unknown> } }).credit_purchase
+      .payment;
+    expect("extensions" in bare).toBe(false);
   });
 });

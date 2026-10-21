@@ -1,0 +1,65 @@
+{
+  "name": "lago-x402",
+  "version": "0.1.0",
+  "description": "x402 v2 payment-gate middleware backed by Lago.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^20.19 || >=22.12"
+  },
+  "license": "MIT",
+  "homepage": "https://www.getlago.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getlago/lago-x402-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/getlago/lago-x402-js/issues"
+  },
+  "keywords": [
+    "lago",
+    "x402",
+    "payments",
+    "middleware",
+    "billing"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "format": "prettier --write src tests",
+    "format:check": "prettier --check src tests"
+  },
+  "dependencies": {
+    "@x402/core": "^2.28.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.0.0",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.59.2",
+    "undici": "^6.28.0",
+    "vitest": "^4.1.11"
+  }
+}

@@ -56,7 +56,7 @@ export interface GateDeps {
   billing: (route: NormalizedRoute, externalSubscriptionId: string) => CallBilling;
 }
 
-const GATE_CHECKS_PATH = "/x402/gate_checks";
+export const GATE_CHECKS_PATH = "/x402/gate_checks";
 const CREDIT_PURCHASES_PATH = "/x402/credit_purchases";
 /** The E8 retry (lost answer or failed grant) runs only with at least this much budget left. */
 const MIN_RETRY_BUDGET_MS = 1000;
@@ -145,7 +145,28 @@ function refusal(
   };
 }
 
-const unavailable = (): GateOutcome => refusal(503, { error: "unavailable" });
+/** 503 `unavailable`: the gate's fail-closed answer, also given for a route that is not active. */
+export const unavailable = (): GateOutcome => refusal(503, { error: "unavailable" });
+
+/** E7's body: the one builder for the gate's three legs and the boot check, so boot probes Lago
+ * with exactly the bytes leg 1 sends. `siwx` only on leg 2, exactly as decoded. */
+export function gateCheckBody(
+  config: NormalizedConfig,
+  route: NormalizedRoute,
+  siwx?: Record<string, unknown>,
+): { gate_check: Record<string, unknown> } {
+  return {
+    gate_check: {
+      connection_code: config.connectionCode,
+      plan_code: route.planCode,
+      billable_metric_code: route.billableMetric,
+      wallet_code: route.walletCode,
+      amount_cents: route.topUpAmountCents,
+      estimated_call_cost_cents: route.estimatedCallCostCents,
+      ...(siwx === undefined ? {} : { siwx }),
+    },
+  };
+}
 
 /** What a thrown value may say in a report: our own errors carry only sanitized codes; anything
  * else is replaced, since its message may quote a header or a body. */
@@ -222,24 +243,13 @@ export class Gate {
 
   /** E7. `siwx` only on leg 2, exactly as decoded. */
   async #gateCheck(route: NormalizedRoute, siwx?: Record<string, unknown>): Promise<GateCheckResult> {
-    const body = {
-      gate_check: {
-        connection_code: this.#config.connectionCode,
-        plan_code: route.planCode,
-        billable_metric_code: route.billableMetric,
-        wallet_code: route.walletCode,
-        amount_cents: route.topUpAmountCents,
-        estimated_call_cost_cents: route.estimatedCallCostCents,
-        ...(siwx === undefined ? {} : { siwx }),
-      },
-    };
     let answer: LagoAnswer;
     try {
       answer = await this.#client.request(
         "gate_checks",
         "POST",
         GATE_CHECKS_PATH,
-        body,
+        gateCheckBody(this.#config, route, siwx),
         this.#config.timeouts.gateCheckMs,
       );
     } catch (err) {

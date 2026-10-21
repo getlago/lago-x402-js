@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LagoX402ErrorWhere, NormalizedRoute } from "../../src/config.js";
 import { LagoApiError, LagoUnreachableError, LagoX402UsageError } from "../../src/errors.js";
 import { LagoClient } from "../../src/lago-client.js";
 import { createCallBilling, EventSender, type UsageEvent } from "../../src/usage.js";
 import { startFakeLago, type FakeAnswer, type FakeLago } from "../support/fake-lago.js";
 import { validationErrors } from "../support/fixtures.js";
+
+// Pass-through spy, so a test can tell WHEN a transaction id is drawn; everything else is real.
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return { ...actual, randomUUID: vi.fn(actual.randomUUID) };
+});
 
 let lago: FakeLago;
 let reports: { err: Error; where: LagoX402ErrorWhere }[];
@@ -136,6 +142,37 @@ describe("createCallBilling", () => {
     expect(lago.requests).toHaveLength(1);
   });
 
+  it("fixes transaction_id and timestamp when the billing is created, not when it finishes", async () => {
+    const sent: unknown[] = [];
+    const client = {
+      request: (_e: string, _m: string, _p: string, body: unknown) => {
+        sent.push(body);
+        return Promise.resolve({ status: 200, body: {} });
+      },
+    } as unknown as LagoClient;
+    const snd = new EventSender(client, { timeoutMs: 1000 }, report);
+    const uuid = vi.mocked(randomUUID);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-21T12:00:00.900Z"));
+      const drawnBefore = uuid.mock.results.length;
+      const billing = createCallBilling(route, "sub_1", snd, report);
+      const drawn = uuid.mock.results.slice(drawnBefore).map((r) => r.value as string);
+      expect(drawn).toHaveLength(1);
+
+      vi.setSystemTime(new Date("2026-10-21T12:01:30.000Z"));
+      await billing.finish(200, () => 3);
+
+      expect(uuid.mock.results.length).toBe(drawnBefore + 1);
+      expect(sent).toHaveLength(1);
+      const { event } = sent[0] as { event: { transaction_id: string; timestamp: number } };
+      expect(event.transaction_id).toBe(drawn[0]);
+      expect(event.timestamp).toBe(Date.parse("2026-10-21T12:00:00Z") / 1000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never throws into the caller when onError throws", async () => {
     const throwing = (): void => {
       throw new Error("boom");
@@ -248,6 +285,28 @@ describe("EventSender", () => {
       await Promise.all(sends);
       expect(s.peak()).toBe(16);
       expect(reports).toHaveLength(1);
+    });
+
+    it("drain keeps the process alive while it waits (ref'd timer), and clears its timer once idle", async () => {
+      const s = stub();
+      const snd = new EventSender(s.client, { timeoutMs: 1000, backoffMs: 1 }, report);
+      const p = snd.send(event());
+      const setSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+      try {
+        const drained = snd.drain(60_000);
+        expect(setSpy).toHaveBeenCalledTimes(1);
+        expect(setSpy.mock.calls[0][1]).toBe(60_000);
+        const timer = setSpy.mock.results[0].value as NodeJS.Timeout;
+        expect(timer.hasRef()).toBe(true);
+        s.release.shift()!();
+        await p;
+        expect(await drained).toBe(true);
+        expect(clearSpy).toHaveBeenCalledWith(timer);
+      } finally {
+        setSpy.mockRestore();
+        clearSpy.mockRestore();
+      }
     });
 
     it("drain resolves true when idle and false at its timeout, then true once done", async () => {

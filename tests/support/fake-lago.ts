@@ -7,6 +7,8 @@ import { billableMetric, gateCheckChallenge, notFound, settlement } from "./fixt
 export type FakeRoute = "gate_checks" | "credit_purchases" | "events" | "billable_metrics";
 
 export interface RecordedRequest {
+  /** The Lago endpoint the path names, `null` for any other path. */
+  route: FakeRoute | null;
   method: string;
   path: string;
   headers: IncomingHttpHeaders;
@@ -42,11 +44,22 @@ function routeOf(path: string): FakeRoute | null {
   return null;
 }
 
+/** The metric code a `GET /billable_metrics/<code>` names, decoded. */
+export function metricCodeOf(path: string): string {
+  const segment = path.split("?")[0].slice(`${PREFIX}/billable_metrics/`.length);
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 const defaults: Record<FakeRoute, FakeHandler> = {
   gate_checks: () => ({ status: 200, body: gateCheckChallenge() }),
   credit_purchases: () => ({ status: 200, body: settlement() }),
   events: () => ({ status: 200, body: {} }),
-  billable_metrics: () => ({ status: 200, body: billableMetric() }),
+  // A usable metric (sum_agg on "value", not recurring) under the code that was asked for.
+  billable_metrics: (req) => ({ status: 200, body: billableMetric({ code: metricCodeOf(req.path) }) }),
 };
 
 function parseJson(text: string): unknown {
@@ -68,15 +81,17 @@ export async function startFakeLago(): Promise<FakeLago> {
     req.on("end", () => {
       void (async () => {
         const rawBody = Buffer.concat(chunks).toString("utf8");
+        const path = req.url ?? "";
+        const route = routeOf(path);
         const recorded: RecordedRequest = {
+          route,
           method: req.method ?? "",
-          path: req.url ?? "",
+          path,
           headers: req.headers,
           rawBody,
           json: parseJson(rawBody),
         };
         requests.push(recorded);
-        const route = routeOf(recorded.path);
         let answer: FakeAnswer;
         try {
           answer = route

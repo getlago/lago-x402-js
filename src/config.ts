@@ -84,7 +84,8 @@ export interface NormalizedConfig {
 }
 
 const DEFAULT_TIMEOUTS = { gateCheckMs: 5000, creditPurchaseMs: 45000, eventMs: 10000 };
-const ROUTE_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
+/** Route names appear in errors and logs, so they are restricted to log-safe characters. */
+export const ROUTE_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
 const RATE_AMOUNT = /^\d+(\.\d{1,5})?$/;
 const HOSTNAME = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/i;
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];

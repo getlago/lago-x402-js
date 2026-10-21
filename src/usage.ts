@@ -110,7 +110,9 @@ export class EventSender {
     });
   }
 
-  /** True when everything in flight and queued settled within `timeoutMs`. */
+  /** True when everything in flight and queued settled within `timeoutMs`. Its timer stays
+   * ref'd (unlike the backoff timers), so awaiting `drain` in a shutdown handler keeps Node
+   * alive until the queue is idle or the timeout fires. */
   drain(timeoutMs: number): Promise<boolean> {
     if (this.#active.size === 0 && this.#queue.length === 0) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
@@ -118,7 +120,6 @@ export class EventSender {
         this.#idleWaiters = this.#idleWaiters.filter((w) => w !== onIdle);
         resolve(false);
       }, timeoutMs);
-      timer.unref();
       const onIdle = (): void => {
         clearTimeout(timer);
         resolve(true);

@@ -6,7 +6,12 @@ import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { safeBase64Encode } from "@x402/core/utils";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { validateConfig, type LagoX402Config, type LagoX402ErrorWhere } from "../../src/config.js";
+import {
+  validateConfig,
+  type LagoX402Config,
+  type LagoX402ErrorWhere,
+  type LagoX402Route,
+} from "../../src/config.js";
 import { LagoApiError, LagoUnreachableError } from "../../src/errors.js";
 import { Gate, type CallBilling, type GateDeps, type GateOutcome, type GateRequest } from "../../src/gate.js";
 import { LagoClient } from "../../src/lago-client.js";
@@ -89,6 +94,7 @@ function setup(
     timeouts?: LagoX402Config["timeouts"];
     report?: GateDeps["report"];
     billing?: GateDeps["billing"];
+    resource?: LagoX402Route["resource"];
   } = {},
 ) {
   const config = validateConfig({
@@ -109,7 +115,7 @@ function setup(
           paidTopUpMinAmountCents: 100,
           paidTopUpMaxAmountCents: 10000,
         },
-        resource: { description: "Generate text", mimeType: "application/json" },
+        resource: o.resource ?? { description: "Generate text", mimeType: "application/json" },
       },
     },
     ...(o.timeouts ? { timeouts: o.timeouts } : {}),
@@ -564,6 +570,38 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     expect(reports).toEqual([]);
   });
 
+  it("E8's payment.resource is the 402's resource object, byte for byte", async () => {
+    const { handle } = setup({
+      resource: {
+        iconUrl: "https://api.merchant.example/icon.png",
+        tags: ["ai", "text"],
+        serviceName: "Merchant AI",
+        mimeType: "application/json",
+        description: "Generate text",
+      },
+    });
+    const first = await handle();
+    const header = await pay(evmAgent({ maxAmountPerPayment: "$10" }), first);
+    lago.requests.length = 0;
+
+    served(await handle({ "PAYMENT-SIGNATURE": header }));
+
+    const offered = JSON.stringify(read402(first).resource);
+    expect(offered).toBe(
+      JSON.stringify({
+        url: RESOURCE_URL,
+        description: "Generate text",
+        mimeType: "application/json",
+        serviceName: "Merchant AI",
+        tags: ["ai", "text"],
+        iconUrl: "https://api.merchant.example/icon.png",
+      }),
+    );
+    expect(e8()[0].rawBody).toContain(`"resource":${offered},`);
+    const sent = e8()[0].json as { credit_purchase: { payment: { resource: unknown } } };
+    expect(JSON.stringify(sent.credit_purchase.payment.resource)).toBe(offered);
+  });
+
   it.each<[string, Requirement]>([
     ["amount", evmRequirement({ amountCents: 1000 })],
     ["payTo", evmRequirement({ payTo: "0x00000000000000000000000000000000000b0b02" })],
@@ -796,6 +834,31 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     expect(billed).toEqual([]);
   });
 
+  it.each<[string, FakeAnswer]>([
+    ["a lost answer", { status: 200, destroySocket: true }],
+    ["credit_grant_failed", grantFailed],
+    ["a 502", { status: 502 }],
+  ])("a payment refusal on the retry after %s is 503 payment_pending, never 402", async (_name, first) => {
+    const { handle, reports, billed } = setup();
+    const { header } = await paidHeader(handle);
+    // The first attempt may have settled and spent the authorization the retry presents again.
+    answers("credit_purchases", first, {
+      status: 422,
+      body: validationErrors({ payment: ["invalid_exact_evm_payload_authorization_nonce"] }),
+    });
+
+    expectRefusal(await handle({ "PAYMENT-SIGNATURE": header }), 503, { error: "payment_pending" }, "30");
+
+    expect(e8()).toHaveLength(2);
+    expect(e8()[1].rawBody).toBe(e8()[0].rawBody);
+    expectReport(reports, "gate.purchase", {
+      endpoint: "credit_purchases",
+      status: 422,
+      errorCodes: { payment: ["invalid_exact_evm_payload_authorization_nonce"] },
+    });
+    expect(billed).toEqual([]);
+  });
+
   it("a destroyed socket on E8 is retried once", async () => {
     const { handle, reports } = setup();
     const { header } = await paidHeader(handle);
@@ -891,6 +954,25 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
       code: "unexpected_answer",
     });
     expect(billed).toEqual([]);
+  });
+
+  it("a throw after E8 settled is 503 payment_pending + gate.purchase, never unavailable", async () => {
+    const secret = "secret-" + randomUUID();
+    const { handle, reports } = setup({
+      billing: () => {
+        throw new TypeError(`billing exploded with ${secret}`);
+      },
+    });
+    const { header } = await paidHeader(handle);
+    answers("credit_purchases", { status: 200, body: settlement() });
+
+    expectRefusal(await handle({ "PAYMENT-SIGNATURE": header }), 503, { error: "payment_pending" }, "30");
+
+    expect(e8()).toHaveLength(1);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].where).toBe("gate.purchase");
+    expect(reports[0].err.message).toContain("TypeError");
+    expect(inspect(reports[0].err)).not.toContain(secret);
   });
 
   it.each<[string, FakeAnswer, number, Record<string, string>, string | undefined, boolean]>([

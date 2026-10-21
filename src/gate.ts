@@ -27,6 +27,7 @@ import {
   paymentRequiredHeader,
   paymentResponseHeader,
   renderAccepts,
+  renderResource,
   renderSignIn,
   resourceUrl,
 } from "./wire.js";
@@ -290,13 +291,19 @@ export class Gate {
   async #purchase(purchase: Purchase): Promise<GateOutcome> {
     const budget = this.#config.timeouts.creditPurchaseMs;
     const started = Date.now();
-    const first = await this.#attempt(purchase, 1, budget);
-    if (first.kind === "done") return first.outcome;
-    const remaining = budget - (Date.now() - started);
-    if (remaining < MIN_RETRY_BUDGET_MS) return this.#paymentPending(first.cause);
-    const second = await this.#attempt(purchase, 2, remaining);
-    // The map never asks for a third attempt; fail as pending if it ever does.
-    return second.kind === "done" ? second.outcome : this.#paymentPending(second.cause);
+    try {
+      const first = await this.#attempt(purchase, 1, budget);
+      if (first.kind === "done") return first.outcome;
+      const remaining = budget - (Date.now() - started);
+      if (remaining < MIN_RETRY_BUDGET_MS) return this.#paymentPending(first.cause);
+      const second = await this.#attempt(purchase, 2, remaining);
+      // The map never asks for a third attempt; fail as pending if it ever does.
+      return second.kind === "done" ? second.outcome : this.#paymentPending(second.cause);
+    } catch (err) {
+      // E8 was called, so money may have moved: any throw from here on (a failing billing
+      // factory after `settled`, say) asks the agent to come back, never `unavailable` (R17).
+      return this.#paymentPending(reportable(err));
+    }
   }
 
   async #attempt(purchase: Purchase, attempt: 1 | 2, timeoutMs: number): Promise<PurchaseStep> {
@@ -379,13 +386,9 @@ export class Gate {
     };
   }
 
+  /** The 402's `resource`, also reset into the forwarded payment: one builder, one shape. */
   #resource(route: NormalizedRoute, req: GateRequest) {
-    const { tags, ...rest } = route.resource;
-    return {
-      url: resourceUrl(this.#config.origin, req.target),
-      ...rest,
-      ...(tags === undefined ? {} : { tags: [...tags] }),
-    };
+    return renderResource({ url: resourceUrl(this.#config.origin, req.target), ...route.resource });
   }
 
   #refuse(decision: Extract<Decision, { kind: "refuse" }>, where: LagoX402ErrorWhere): GateOutcome {

@@ -136,7 +136,8 @@ export function mapGateCheckRefusal(answer: LagoAnswer): Decision {
   return unavailable("gate_checks", answer);
 }
 
-/** Maps any non-200 E8 answer. `attempt` is 1 for the first call, 2 for the single retry. */
+/** Maps any non-200 E8 answer. `attempt` is 1 for the first call, 2 for the single retry, which
+ * never challenges: it only follows an answer after which money may have moved. */
 export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): Decision {
   const report = (): Error => new LagoApiError("credit_purchases", answer.status, answer.body);
 
@@ -155,6 +156,10 @@ export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): De
     if (errorCodes.payment_requirements?.includes(AMOUNT_ABOVE_MAXIMUM)) {
       return unavailable("credit_purchases", answer);
     }
+    // Attempt 2 only follows credit_grant_failed (money moved), a lost answer or a 5xx (money may
+    // have moved): the first attempt may have spent the authorization the retry presents again,
+    // so a payment refusal now is never a 402 (ruling R16).
+    if (attempt === 2) return pending(report());
     // payment first, then payment_requirements: the first sanitized code on either.
     const first = errorCodes.payment?.[0] ?? errorCodes.payment_requirements?.[0];
     return first === undefined ? { kind: "challenge" } : { kind: "challenge", error: first };

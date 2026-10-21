@@ -241,12 +241,27 @@ describe("mapCreditPurchaseRefusal (E8)", () => {
     "invalid_authorization",
     "invalid_exact_evm_signature",
     "invalid_asset",
-  ])("payment/payment_requirements code %s is a fresh 402 carrying it", (code) => {
+  ])("payment/payment_requirements code %s is a fresh 402 carrying it on attempt 1", (code) => {
     expect(mapCreditPurchaseRefusal(v({ payment: [code] }), 1)).toEqual({ kind: "challenge", error: code });
-    expect(mapCreditPurchaseRefusal(v({ payment_requirements: [code] }), 2)).toEqual({
+    expect(mapCreditPurchaseRefusal(v({ payment_requirements: [code] }), 1)).toEqual({
       kind: "challenge",
       error: code,
     });
+  });
+
+  // Attempt 2 only follows credit_grant_failed (money moved), a lost answer or a 5xx (money may
+  // have moved): the first attempt may have spent the authorization the retry now presents.
+  it.each<[string, Record<string, string[]>]>([
+    ["a spent-nonce payment code", { payment: ["invalid_exact_evm_payload_authorization_nonce"] }],
+    ["a payment_requirements code", { payment_requirements: ["unsupported_asset"] }],
+    ["both payment fields", { payment: ["a"], payment_requirements: ["b"] }],
+    ["only unsafe payment codes", { payment: ["has space"] }],
+  ])("on attempt 2, %s is 503 payment_pending + report, never a challenge", (_name, details) => {
+    const d = mapCreditPurchaseRefusal(v(details), 2);
+    expect(d).toMatchObject(pending);
+    if (d.kind !== "refuse") throw new Error("expected refuse");
+    expect(d.report).toBeInstanceOf(LagoApiError);
+    expect(d.report).toMatchObject({ endpoint: "credit_purchases", status: 422 });
   });
 
   it("unknown codes on payment/payment_requirements are a fresh 402 but unknown base codes are 503", () => {

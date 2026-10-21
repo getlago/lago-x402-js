@@ -250,20 +250,33 @@ export function renderSignIn(o: {
   };
 }
 
-/** The `PAYMENT-REQUIRED` header value. Only `ResourceInfo`'s keys are copied, undefined
- * ones (and an undefined `error`) omitted. */
+/** The one builder of a 402's `resource` object, also used for the `resource` the gate resets
+ * in the payment it forwards to E8, so both are the same bytes. Only `ResourceInfo`'s keys, in
+ * this order, undefined ones omitted, `tags` copied. Idempotent. */
+export function renderResource(r: Omit<ResourceInfo, "tags"> & { tags?: readonly string[] }): ResourceInfo {
+  const { url, description, mimeType, serviceName, tags, iconUrl } = r;
+  return withoutUndefined({
+    url,
+    description,
+    mimeType,
+    serviceName,
+    tags: tags === undefined ? undefined : [...tags],
+    iconUrl,
+  });
+}
+
+/** The `PAYMENT-REQUIRED` header value. `resource` goes through `renderResource`; an undefined
+ * `error` is omitted. */
 export function paymentRequiredHeader(o: {
   resource: ResourceInfo;
   accepts: PaymentRequirements[];
   extensions: Record<string, unknown>;
   error?: string;
 }): string {
-  const { url, description, mimeType, serviceName, tags, iconUrl } = o.resource;
-  const resource = withoutUndefined({ url, description, mimeType, serviceName, tags, iconUrl });
   return encodePaymentRequiredHeader({
     x402Version: 2,
     ...(o.error === undefined ? {} : { error: o.error }),
-    resource,
+    resource: renderResource(o.resource),
     accepts: o.accepts,
     extensions: o.extensions,
   });

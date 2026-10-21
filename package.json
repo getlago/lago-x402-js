@@ -64,7 +64,7 @@
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.59.2",
     "undici": "^6.28.0",
-    "viem": "^2.57.8",
+    "viem": "2.57.7",
     "vitest": "^4.1.11"
   }
 }

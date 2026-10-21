@@ -320,11 +320,16 @@ export function newNonce(): string {
 }
 
 /** The configured origin plus the request target's pathname. The target is parsed against a
- * dummy base, so an absolute-form or `//host` target can never contribute a host. */
+ * dummy base, so an absolute-form or `//host` target can never contribute a host. Only a
+ * rooted pathname is appended: a non-special scheme (`foo:@host/p`, `mailto:x`) parses to an
+ * opaque path with no leading "/", which would extend the origin's authority. Anything else
+ * (or an unparseable target) gives the origin's root. */
 export function resourceUrl(origin: URL, target: string): string {
+  let pathname = "/";
   try {
-    return origin.origin + new URL(target, "http://placeholder.invalid").pathname;
+    pathname = new URL(target, "http://placeholder.invalid").pathname;
   } catch {
-    return origin.origin + "/";
+    // Unparseable target: the origin's root.
   }
+  return origin.origin + (pathname.startsWith("/") ? pathname : "/");
 }

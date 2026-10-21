@@ -428,11 +428,23 @@ describe("rendering", () => {
       ["\\\\attacker.example\\v1\\generate", "https://api.merchant.example:8443/v1/generate"],
       ["https://attacker.example", "https://api.merchant.example:8443/"],
       ["http://[", "https://api.merchant.example:8443/"],
+      // Non-special schemes parse to an opaque path with no leading "/": appended as is, it
+      // would extend the origin's authority (userinfo, a longer host, a suffix).
+      ["foo:@attacker.example/p", "https://api.merchant.example:8443/"],
+      ["x:.attacker.example", "https://api.merchant.example:8443/"],
+      ["mailto:x", "https://api.merchant.example:8443/"],
+      ["javascript:alert(1)", "https://api.merchant.example:8443/"],
+      ["data:,x", "https://api.merchant.example:8443/"],
+      ["foo://bar", "https://api.merchant.example:8443/"],
     ];
     for (const [target, expected] of cases) {
-      expect(resourceUrl(origin, target)).toBe(expected);
+      const url = resourceUrl(origin, target);
+      expect(url).toBe(expected);
+      expect(new URL(url).host).toBe(origin.host);
     }
-    expect(resourceUrl(new URL("http://localhost:3000"), "/a b")).toBe("http://localhost:3000/a%20b");
+    const local = new URL("http://localhost:3000");
+    expect(resourceUrl(local, "/a b")).toBe("http://localhost:3000/a%20b");
+    expect(resourceUrl(local, "foo:@attacker.example/p")).toBe("http://localhost:3000/");
   });
 });
 

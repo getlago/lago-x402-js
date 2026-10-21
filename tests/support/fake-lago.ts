@@ -77,9 +77,15 @@ export async function startFakeLago(): Promise<FakeLago> {
         };
         requests.push(recorded);
         const route = routeOf(recorded.path);
-        const answer: FakeAnswer = route
-          ? await (handlers.get(route) ?? defaults[route])(recorded)
-          : { status: 404, body: notFound("route") };
+        let answer: FakeAnswer;
+        try {
+          answer = route
+            ? await (handlers.get(route) ?? defaults[route])(recorded)
+            : { status: 404, body: notFound("route") };
+        } catch {
+          // A throwing test handler answers 500 instead of leaving the request hanging.
+          answer = { status: 500, body: { status: 500, error: "Internal Server Error" } };
+        }
         if (answer.delayMs) await new Promise((r) => setTimeout(r, answer.delayMs));
         if (answer.destroySocket) {
           req.socket.destroy();

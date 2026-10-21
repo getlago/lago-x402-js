@@ -108,7 +108,8 @@ export interface Settlement {
 }
 
 /** Mirrors `app/serializers/v1/x402/settlement_serializer.rb`: `transaction_hash` only when
- * settled, `reconcile_after` (iso8601) only when pending. */
+ * settled, `reconcile_after` (iso8601) only when pending, and `external_subscription_id`
+ * (`subscription&.external_id`) null while pending: no subscription exists before the grant. */
 export function settlement(o: Partial<Settlement> = {}): { x402_settlement: Settlement } {
   const status = o.status ?? "settled";
   const settled = status === "settled";
@@ -122,7 +123,7 @@ export function settlement(o: Partial<Settlement> = {}): { x402_settlement: Sett
       payer_address: "0x00000000000000000000000000000000000b0b01",
       lago_customer_id: randomUUID(),
       lago_wallet_transaction_id: settled ? randomUUID() : null,
-      external_subscription_id: "x402_sub_" + randomUUID(),
+      external_subscription_id: settled ? "x402_sub_" + randomUUID() : null,
       credits_granted: settled ? "5.0" : null,
       settled_amount_cents: 500,
       reconcile_after: settled ? null : new Date(Date.now() + 90_000).toISOString().replace(/\.\d+Z$/, "Z"),

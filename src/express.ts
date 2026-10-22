@@ -10,50 +10,24 @@
  *
  * Only Express's types are imported; the package never loads `express` at runtime. */
 import type { OutgoingHttpHeader, ServerResponse } from "node:http";
-import { withPrivateCacheControl } from "@x402/core/http";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
-import { ROUTE_NAME } from "./config.js";
-import { LagoX402ConfigError } from "./errors.js";
+import { bill, checkRoute, decide, privateCacheControl, type Serve, type X402Source } from "./adapter.js";
 import { unavailable, type GateOutcome, type GateRequest } from "./gate.js";
-import { handleRequest, hasRoute, type LagoX402 } from "./x402.js";
-
-type Serve = Extract<GateOutcome, { action: "serve" }>;
-
-function isPromiseLike(value: unknown): value is PromiseLike<LagoX402> {
-  return (
-    (typeof value === "object" || typeof value === "function") &&
-    value !== null &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
-}
+import type { LagoX402 } from "./x402.js";
 
 /** The gate for the configured route `route`. Given an instance, an unknown route name throws
  * `LagoX402ConfigError` now; given a promise, each request awaits it, and a rejected promise
  * answers 503 `unavailable` (the app's own `await createLagoX402` surfaces the error). */
 export function lagoX402(x402: LagoX402 | PromiseLike<LagoX402>, route: string): RequestHandler {
-  if (!isPromiseLike(x402) && !hasRoute(x402, route)) {
-    // A name that can never be a route (it fails the config's pattern) stays out of the message.
-    throw typeof route === "string" && ROUTE_NAME.test(route)
-      ? new LagoX402ConfigError(route, "not configured")
-      : new LagoX402ConfigError(null, "lagoX402 was given a route name that is not configured");
-  }
+  checkRoute(x402, route, "lagoX402");
   return (req, res, next) => {
     void gate(x402, route, req, res, next);
   };
 }
 
-async function instanceOf(x402: LagoX402 | PromiseLike<LagoX402>): Promise<LagoX402 | null> {
-  if (!isPromiseLike(x402)) return x402;
-  try {
-    return await x402;
-  } catch {
-    return null;
-  }
-}
-
 /** Never rejects. `next()` is called only for a serve outcome, and nothing is written after it. */
 async function gate(
-  x402: LagoX402 | PromiseLike<LagoX402>,
+  x402: X402Source,
   route: string,
   req: Request,
   res: Response,
@@ -61,10 +35,7 @@ async function gate(
 ): Promise<void> {
   let handedOver = false;
   try {
-    const instance = await instanceOf(x402);
-    // No instance to report through: the app's own await of createLagoX402 surfaces the error.
-    if (instance === null) return respond(res, unavailable());
-    const outcome = await handleRequest(instance, route, gateRequest(req));
+    const outcome = await decide(x402, route, () => gateRequest(req));
     if (outcome.action === "respond") return respond(res, outcome);
     serve(res, outcome);
     handedOver = true;
@@ -107,16 +78,16 @@ function respond(res: Response, outcome: GateOutcome): void {
 function serve(res: Response, outcome: Serve): void {
   for (const [name, value] of Object.entries(outcome.headers)) res.setHeader(name, value);
   keepPrivate(res);
-  const bill = (): void => {
-    try {
-      outcome.billing.finish(res.statusCode, () => res.locals?.lagoUsage).catch(() => undefined);
-    } catch {
-      // Metering never breaks a response.
-    }
+  const billNow = (): void => {
+    void bill(
+      outcome.billing,
+      () => res.statusCode,
+      () => res.locals?.lagoUsage,
+    );
   };
-  res.on("finish", bill);
+  res.on("finish", billNow);
   res.on("close", () => {
-    if (res.headersSent) bill();
+    if (res.headersSent) billNow();
   });
 }
 
@@ -156,8 +127,6 @@ function withPrivateHeaders(res: ServerResponse, args: unknown[]): unknown[] {
     for (const name of Object.keys(record)) if (name) res.setHeader(name, record[name]);
     rest = args.slice(0, hasReason ? 2 : 1);
   }
-  const current = res.getHeader("Cache-Control");
-  const value = current === undefined ? null : Array.isArray(current) ? current.join(", ") : String(current);
-  res.setHeader("Cache-Control", withPrivateCacheControl(value));
+  res.setHeader("Cache-Control", privateCacheControl(res.getHeader("Cache-Control")));
   return rest;
 }

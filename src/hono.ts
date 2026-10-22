@@ -17,37 +17,30 @@
  * gate's own answers are `Response`s and never reach the handler. Nothing here throws into Hono:
  * an unexpected failure answers 503 `unavailable` and never serves. Only Hono's types are
  * imported; the package never loads `hono` at runtime. */
-import { withPrivateCacheControl } from "@x402/core/http";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { ROUTE_NAME } from "./config.js";
-import { LagoX402ConfigError } from "./errors.js";
-import { unavailable, type CallBilling, type GateOutcome, type GateRequest } from "./gate.js";
-import { handleRequest, hasRoute, type LagoX402 } from "./x402.js";
+import {
+  bill,
+  checkRoute,
+  decide,
+  responseOf,
+  withServeHeaders,
+  type Respond,
+  type Serve,
+} from "./adapter.js";
+import { unavailable, type CallBilling, type GateRequest } from "./gate.js";
+import type { LagoX402 } from "./x402.js";
 
 /** The variable the handler reports usage through: `c.set("lagoUsage", n)`. */
 export type LagoX402Variables = { lagoUsage: number };
 
 type Env = { Variables: LagoX402Variables };
-type Respond = Extract<GateOutcome, { action: "respond" }>;
-type Serve = Extract<GateOutcome, { action: "serve" }>;
 
 /** The part of a Node `ServerResponse` (or `Http2ServerResponse`) billing needs. */
 interface NodeOutgoing {
   readonly headersSent: boolean;
   readonly statusCode: number;
   on(event: "finish" | "close", listener: () => void): unknown;
-}
-
-/** Statuses whose response has no body; a rebuilt one keeps it that way. */
-const NULL_BODY_STATUSES = new Set([204, 205, 304]);
-
-function isPromiseLike(value: unknown): value is PromiseLike<LagoX402> {
-  return (
-    (typeof value === "object" || typeof value === "function") &&
-    value !== null &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
 }
 
 /** The gate for the configured route `route`. Given an instance, an unknown route name throws
@@ -57,42 +50,12 @@ export function lagoX402(
   x402: LagoX402 | PromiseLike<LagoX402>,
   route: string,
 ): MiddlewareHandler<{ Variables: LagoX402Variables }> {
-  if (!isPromiseLike(x402) && !hasRoute(x402, route)) {
-    // A name that can never be a route (it fails the config's pattern) stays out of the message.
-    throw typeof route === "string" && ROUTE_NAME.test(route)
-      ? new LagoX402ConfigError(route, "not configured")
-      : new LagoX402ConfigError(null, "lagoX402 was given a route name that is not configured");
-  }
+  checkRoute(x402, route, "lagoX402");
   return async (c, next) => {
-    const outcome = await decide(x402, route, c);
+    const outcome = await decide(x402, route, () => gateRequest(c));
     if (outcome.action === "respond") return respond(c, outcome);
     await serve(c, next, outcome);
   };
-}
-
-async function instanceOf(x402: LagoX402 | PromiseLike<LagoX402>): Promise<LagoX402 | null> {
-  if (!isPromiseLike(x402)) return x402;
-  try {
-    return await x402;
-  } catch {
-    return null;
-  }
-}
-
-/** Never rejects: anything unexpected is 503 `unavailable`. */
-async function decide(
-  x402: LagoX402 | PromiseLike<LagoX402>,
-  route: string,
-  c: Context<Env>,
-): Promise<GateOutcome> {
-  try {
-    const instance = await instanceOf(x402);
-    // No instance to report through: the app's own await of createLagoX402 surfaces the error.
-    if (instance === null) return unavailable();
-    return await handleRequest(instance, route, gateRequest(c));
-  } catch {
-    return unavailable();
-  }
 }
 
 /** The request as received: `c.req.url` (the gate keeps only its pathname, never its host),
@@ -118,13 +81,9 @@ function respond(c: Context<Env>, outcome: Respond): Response {
     });
     for (const [name, value] of Object.entries(outcome.headers)) c.res.headers.set(name, value);
   } catch {
-    replace(c, plain(outcome));
+    replace(c, responseOf(outcome));
   }
   return c.res;
-}
-
-function plain(outcome: Respond): Response {
-  return new Response(outcome.body, { status: outcome.status, headers: outcome.headers });
 }
 
 /** Makes `response` the answer as is: clearing `c.res` first stops Hono merging the old one's
@@ -150,10 +109,10 @@ async function serve(c: Context<Env>, next: Next, outcome: Serve): Promise<void>
   } catch {
     // A served response never goes out without `private`: fail closed instead.
     const fallback = unavailable();
-    if (fallback.action === "respond") replace(c, plain(fallback));
+    if (fallback.action === "respond") replace(c, responseOf(fallback));
     return;
   }
-  if (outgoing === null) bill(outcome.billing, c.res.status, readUsage);
+  if (outgoing === null) void bill(outcome.billing, () => c.res.status, readUsage);
 }
 
 /** `c.env.outgoing` when `@hono/node-server` serves the request (its `HttpBindings`). */
@@ -176,46 +135,21 @@ function nodeOutgoing(c: Context<Env>): NodeOutgoing | null {
   return null;
 }
 
-/** Never awaited, never throws or rejects into the response. `finish` is idempotent. */
-function bill(billing: CallBilling, status: number, readUsage: () => unknown): void {
-  try {
-    billing.finish(status, readUsage).catch(() => undefined);
-  } catch {
-    // Metering never breaks a response.
-  }
-}
-
 /** On `finish`, or on `close` when the headers were sent before the client went away, with the
  * status that actually went out. */
 function billWhenSent(outgoing: NodeOutgoing, billing: CallBilling, readUsage: () => unknown): void {
-  outgoing.on("finish", () => bill(billing, outgoing.statusCode, readUsage));
+  const billNow = (): void => void bill(billing, () => outgoing.statusCode, readUsage);
+  outgoing.on("finish", billNow);
   outgoing.on("close", () => {
-    if (outgoing.headersSent) bill(billing, outgoing.statusCode, readUsage);
+    if (outgoing.headersSent) billNow();
   });
 }
 
-/** Adds the serve headers to `c.res` and merges `private` into its final `Cache-Control`, never
- * overwriting the handler's directives (R4, R26). A response with immutable headers (`fetch()`)
- * is rebuilt first. Throws when the response cannot be rebuilt (no HTTP status, as
- * `Response.error()`). */
+/** Adds the serve headers to `c.res` and merges `private` into its final `Cache-Control`
+ * (`withServeHeaders`), replacing `c.res` when it had immutable headers and was rebuilt. Throws
+ * when the response cannot be rebuilt (no HTTP status, as `Response.error()`). */
 function keepPrivate(c: Context<Env>, headers: Record<string, string>): void {
-  try {
-    applyServeHeaders(c.res.headers, headers);
-  } catch {
-    const res = c.res;
-    // `Response` would turn a status outside 200–599 into an error, or (`@hono/node-server`'s
-    // lightweight one) into a 200.
-    if (!(res.status >= 200 && res.status <= 599)) throw new Error("lago-x402: response has no HTTP status");
-    replace(c, new Response(NULL_BODY_STATUSES.has(res.status) ? null : res.body, res));
-    applyServeHeaders(c.res.headers, headers);
-  }
-}
-
-/** Throws (before changing anything) when `target` is immutable. */
-function applyServeHeaders(target: Headers, headers: Record<string, string>): void {
-  for (const [name, value] of Object.entries(headers)) {
-    // The serve outcome's own `Cache-Control` is the merge's result when the handler set none.
-    if (name.toLowerCase() !== "cache-control") target.set(name, value);
-  }
-  target.set("Cache-Control", withPrivateCacheControl(target.get("Cache-Control")));
+  const res = c.res;
+  const served = withServeHeaders(res, headers);
+  if (served !== res) replace(c, served);
 }

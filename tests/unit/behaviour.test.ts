@@ -92,7 +92,10 @@ const purchaseOf = (r: RecordedRequest) =>
 const siwxOf = (r: RecordedRequest) =>
   gateCheckOf(r).siwx as { address: string; domain: string; uri: string } | undefined;
 const paymentOf = (r: RecordedRequest) =>
-  purchaseOf(r).payment as { resource: { url: string }; payload: { authorization: { from: string } } };
+  purchaseOf(r).payment as {
+    resource: { url: string };
+    payload: { authorization: { from: string; nonce: string } };
+  };
 const payerOf = (r: RecordedRequest) => paymentOf(r).payload.authorization.from;
 const subscriptionFor = (address: string) => `sub_${address.toLowerCase()}`;
 
@@ -119,6 +122,20 @@ function settles(r: RecordedRequest): FakeAnswer {
       transaction_hash: TX_HASH,
       external_subscription_id: subscriptionFor(from),
     }),
+  };
+}
+
+/** E8 as Lago runs it: settles a payment once, then answers it again from its row
+ * (`replayed: true`) for as long as it is kept, whoever presents it. */
+function settlesOnce(): (r: RecordedRequest) => FakeAnswer {
+  const seen = new Set<string>();
+  return (r) => {
+    const answer = settles(r);
+    const nonce = paymentOf(r).payload.authorization.nonce;
+    const replayed = seen.has(nonce);
+    seen.add(nonce);
+    const { x402_settlement } = answer.body as ReturnType<typeof settlement>;
+    return { ...answer, body: { x402_settlement: { ...x402_settlement, replayed } } };
   };
 }
 
@@ -408,6 +425,46 @@ describe.each(FRAMEWORKS)("%s", (fw) => {
       expect(retryAfter).toBeLessThanOrEqual(90);
       expect(await res.json()).toStrictEqual({ error: "payment_pending" });
       expect(await settle()).toStrictEqual([]);
+      expect(reports).toStrictEqual([]);
+    });
+
+    it("a PAYMENT-SIGNATURE resent after it was served → 409 payment_already_settled, billed once", async () => {
+      lago.on("credit_purchases", settlesOnce());
+      const { url, settle } = await start({ usage: 2 });
+      const agent = payingAgent();
+      expect((await agent.fetch(url, { method: "POST" })).status).toBe(200);
+      const payment = agent.sent.at(-1)!.get("payment-signature")!;
+
+      const replay = await fetch(url, { method: "POST", headers: { "PAYMENT-SIGNATURE": payment } });
+
+      await expectRefusal(replay, 409, { error: "payment_already_settled" });
+      expect(e8()).toHaveLength(2);
+      expect(e8()[1].rawBody).toBe(e8()[0].rawBody);
+      const billed = await settle();
+      expect(billed).toHaveLength(1);
+      expect(billed[0].external_subscription_id).toBe(subscriptionFor(agent.agent.account.address));
+      expect(reports).toStrictEqual([]);
+    });
+
+    it("E8 lost answer, then a settled replay of the same payment → served once with PAYMENT-RESPONSE", async () => {
+      const replays = settlesOnce();
+      let calls = 0;
+      lago.on("credit_purchases", (r) => {
+        const answer = replays(r); // the first call settles, though its answer is lost
+        return calls++ === 0 ? { status: 200, destroySocket: true } : answer;
+      });
+      const { url, settle } = await start({ usage: 2 });
+      const agent = payingAgent();
+
+      const res = await agent.fetch(url, { method: "POST" });
+
+      expect(res.status).toBe(200);
+      expect(decodePaymentResponseHeader(res.headers.get("payment-response")!).transaction).toBe(TX_HASH);
+      expect(e8()).toHaveLength(2);
+      expect(e8()[1].rawBody).toBe(e8()[0].rawBody);
+      const billed = await settle();
+      expect(billed).toHaveLength(1);
+      expect(billed[0].external_subscription_id).toBe(subscriptionFor(agent.agent.account.address));
       expect(reports).toStrictEqual([]);
     });
 

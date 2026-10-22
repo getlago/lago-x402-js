@@ -520,6 +520,13 @@ function leakySettled(req: RecordedRequest): FakeAnswer {
   };
 }
 
+/** The same purchase answered again from Lago's row (`replayed: true`). */
+function leakyReplay(req: RecordedRequest): FakeAnswer {
+  const answer = leakySettled(req);
+  const { x402_settlement } = answer.body as { x402_settlement: Record<string, unknown> };
+  return { ...answer, body: { x402_settlement: { ...x402_settlement, replayed: true } } };
+}
+
 function leakyPending(): FakeAnswer {
   const { x402_settlement } = settlement({ status: "pending" });
   return {
@@ -974,6 +981,21 @@ const SCENARIOS: Scenario[] = [
     name: "leg 3: E8 lost answer, then settled",
     send: paid,
     lago: { credit_purchases: [{ status: 200, destroySocket: true }, leakySettled] },
+    handler: SERVED,
+    status: 200,
+    reports: [],
+  },
+  {
+    name: "leg 3: E8 settled replay on the first attempt",
+    send: paid,
+    lago: { credit_purchases: leakyReplay },
+    status: 409,
+    reports: [],
+  },
+  {
+    name: "leg 3: E8 lost answer, then a settled replay",
+    send: paid,
+    lago: { credit_purchases: [{ status: 200, destroySocket: true }, leakyReplay] },
     handler: SERVED,
     status: 200,
     reports: [],

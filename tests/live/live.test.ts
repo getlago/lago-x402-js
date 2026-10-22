@@ -10,10 +10,12 @@
  * loopback proxy that forwards everything to LAGO_API_URL unchanged and records the usage events
  * it relays (no API change to the package). Then:
  *   1. a plain fetch gets a 402 whose every requirement is on Base Sepolia or Solana devnet;
- *   2. an agent without the sign-in extension pays the top-up and is served with PAYMENT-RESPONSE;
+ *   2. an agent without the sign-in extension pays the top-up and is served with PAYMENT-RESPONSE
+ *      (should Lago still be settling it, 503 payment_pending: the agent waits, then signs in);
  *   3. the same key with the sign-in extension is served from its credits and never pays;
- *   §3h.2: ten gate checks, counting the distinct Solana fee payers they offer;
- *   4. `x402.close()` drains; Lago has both events, and the wallet's ongoing usage rose.
+ *   4. the paid call's PAYMENT-SIGNATURE, sent again, is refused 409 and neither served nor billed;
+ *   5. ten gate checks, counting the distinct Solana fee payers they offer (they rotate);
+ *   6. `x402.close()` drains; Lago has both events, and the wallet's ongoing usage rose.
  *
  * Money moves once per run: LIVE_TOP_UP_CENTS on Base Sepolia, never more (the agent's spend cap
  * is that amount), never on any other network (only Base Sepolia is registered, and a 402
@@ -263,17 +265,30 @@ function payingClient(account: PrivateKeyAccount, topUpCents: number): x402Clien
   return client;
 }
 
-/** With the sign-in extension; any attempt to pay aborts before signing. */
+/** With the sign-in extension; any attempt to pay aborts before signing (the wrapped fetch then
+ * throws). */
 function signingClient(account: PrivateKeyAccount): x402Client {
   const client = new x402Client();
   client.register(BASE_SEPOLIA, new ExactEvmScheme(account));
   client.registerExtension(createSIWxClientExtension({ signers: [account] }));
   client.onBeforePaymentCreation(async () => ({
     abort: true,
-    reason: "step 3 must be served from credits, never paid",
+    reason: "a signed-in call must be served from credits, never paid",
   }));
   return client;
 }
+
+/** True for the middleware's 503 `payment_pending`. */
+async function isPending(res: Response): Promise<boolean> {
+  if (res.status !== 503) return false;
+  try {
+    return ((await res.clone().json()) as { error?: string }).error === "payment_pending";
+  } catch {
+    return false;
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------------------------------------------------------------------------------------------
 
@@ -296,7 +311,9 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
 
   const state: {
     challenged?: boolean;
-    settled?: { transaction: string; network: string };
+    /** The paid call's PAYMENT-SIGNATURE, sent again in step 4. */
+    payment?: string;
+    toppedUp?: boolean;
     baseline?: Wallet;
     signedIn?: boolean;
   } = {};
@@ -327,6 +344,28 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
 
   const newReports = (from: number) =>
     reports.slice(from).map(({ err, where }) => `${where}: ${(err as Error).message}`);
+
+  /** After a 503 `payment_pending`: waits its `Retry-After` and signs in, again until the credits
+   * the top-up bought are granted. Resending the payment would not serve it: a settled payment
+   * presented again is refused (409). */
+  async function signInOncePaid(pending: Response): Promise<Response> {
+    const signIn = wrapFetchWithPayment(fetch, new x402HTTPClient(signingClient(account)));
+    let res = pending;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const wait = Math.min(60, Math.max(1, Number(res.headers.get("retry-after") ?? "30")));
+      log(`step 2: payment pending; signing in in ${wait} s`);
+      await sleep(wait * 1000);
+      try {
+        res = await signIn(routeUrl, { method: "POST" });
+      } catch {
+        // A 402: no credits granted yet, and the signing client refused to pay it.
+        res = new Response(null, { status: 402 });
+        continue;
+      }
+      if (!(await isPending(res))) return res;
+    }
+    return res;
+  }
 
   /** Listens on LIVE_ORIGIN's port on every loopback address its host names. */
   async function listen(app: express.Express): Promise<void> {
@@ -421,39 +460,42 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     const recorder = recordingFetch();
     const pay = wrapFetchWithPayment(recorder.fetch, new x402HTTPClient(payingClient(account, topUpCents)));
 
-    let res = await pay(routeUrl, { method: "POST" });
-    // A settlement Lago still reconciles answers 503 payment_pending: resend the same payment,
-    // which Lago answers from its row (never a second settle).
-    const payment = recorder.sent.at(-1)?.get("payment-signature") ?? null;
-    const pending = async (r: Response) =>
-      r.status === 503 && ((await r.clone().json()) as { error?: string }).error === "payment_pending";
-    for (let retry = 0; payment !== null && retry < 6 && (await pending(res)); retry++) {
-      const wait = Math.min(60, Math.max(1, Number(res.headers.get("retry-after") ?? "30")));
-      log(`step 2: payment pending, resending the same payment in ${wait} s`);
-      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
-      res = await fetch(routeUrl, { method: "POST", headers: { "PAYMENT-SIGNATURE": payment } });
-    }
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toStrictEqual({ served: true });
+    const paid = await pay(routeUrl, { method: "POST" });
     expect(recorder.sent.map((h) => [h.has("sign-in-with-x"), h.has("payment-signature")])).toStrictEqual([
       [false, false],
       [false, true],
     ]);
-    const settled = decodePaymentResponseHeader(res.headers.get("payment-response")!);
-    expect(settled.success).toBe(true);
-    expect(settled.network).toBe(BASE_SEPOLIA);
-    expect(settled.transaction).toMatch(/^0x[0-9a-fA-F]+$/);
-    expect(settled.payer?.toLowerCase()).toBe(account.address.toLowerCase());
-    const purchases = proxy!.relays
-      .slice(relaysFrom)
-      .filter((r) => r.path.endsWith("/x402/credit_purchases"));
-    expect(purchases.length).toBeGreaterThanOrEqual(1);
-    expect(newReports(from)).toStrictEqual([]);
-    log(`step 2: served; settled ${settled.transaction} on ${settled.network}`);
-    state.settled = { transaction: settled.transaction, network: settled.network };
+    state.payment = recorder.sent[1].get("payment-signature")!;
+    const purchases = () =>
+      proxy!.relays.slice(relaysFrom).filter((r) => r.path.endsWith("/x402/credit_purchases")).length;
+    // One paid call: its credit purchase, plus at most the middleware's one retry of it.
+    const paidCallPurchases = purchases();
+    expect(paidCallPurchases).toBeGreaterThanOrEqual(1);
+    expect(paidCallPurchases).toBeLessThanOrEqual(2);
 
-    // The baseline the wallet's ongoing usage must rise from (step 4).
+    if (await isPending(paid)) {
+      // Lago is still settling: the credits are the agent's once it has, so it signs in for them.
+      const res = await signInOncePaid(paid);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toStrictEqual({ served: true });
+      expect(res.headers.get("payment-response")).toBeNull();
+      log("step 2: payment pending, then served from the credits it bought after signing in");
+    } else {
+      expect(paid.status).toBe(200);
+      expect(await paid.json()).toStrictEqual({ served: true });
+      const settled = decodePaymentResponseHeader(paid.headers.get("payment-response")!);
+      expect(settled.success).toBe(true);
+      expect(settled.network).toBe(BASE_SEPOLIA);
+      expect(settled.transaction).toMatch(/^0x[0-9a-fA-F]+$/);
+      expect(settled.payer?.toLowerCase()).toBe(account.address.toLowerCase());
+      log(`step 2: served; settled ${settled.transaction} on ${settled.network}`);
+    }
+    // Signing in never sends a payment.
+    expect(purchases()).toBe(paidCallPurchases);
+    expect(newReports(from)).toStrictEqual([]);
+    state.toppedUp = true;
+
+    // The baseline the wallet's ongoing usage must rise from (step 6).
     state.baseline = await poll("the buyer's wallet", 60_000, 2000, readWallet);
     const { balance_cents, ongoing_balance_cents, ongoing_usage_balance_cents } = state.baseline;
     log(
@@ -463,7 +505,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
   });
 
   it("3 · the same key, signing in, is served from its credits and never sends PAYMENT-SIGNATURE", async () => {
-    expect(state.settled, "step 2 must have topped the wallet up").toBeDefined();
+    expect(state.toppedUp, "step 2 must have topped the wallet up").toBe(true);
     const from = reports.length;
     const relaysFrom = proxy!.relays.length;
     const recorder = recordingFetch();
@@ -486,7 +528,28 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     state.signedIn = true;
   });
 
-  it("§3h.2 · ten gate checks: how many distinct Solana fee payers they offer", async () => {
+  it("4 · the paid call's PAYMENT-SIGNATURE, sent again, is refused 409 and neither served nor billed", async () => {
+    expect(state.payment, "step 2 must have paid").toBeDefined();
+    const from = reports.length;
+    const relaysFrom = proxy!.relays.length;
+
+    const res = await fetch(routeUrl, { method: "POST", headers: { "PAYMENT-SIGNATURE": state.payment! } });
+
+    expect(res.status).toBe(409);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("payment-response")).toBeNull();
+    expect(await res.json()).toStrictEqual({ error: "payment_already_settled" });
+    // Lago answered the settled payment again from its row; the middleware refused to serve it.
+    const purchases = proxy!.relays
+      .slice(relaysFrom)
+      .filter((r) => r.path.endsWith("/x402/credit_purchases"));
+    expect(purchases.map((r) => r.status)).toStrictEqual([200]);
+    expect(newReports(from)).toStrictEqual([]);
+    log("step 4: the paid call's payment, sent again, was refused 409 payment_already_settled");
+  });
+
+  it("5 · ten gate checks: how many distinct Solana fee payers they offer", async () => {
     const relaysFrom = proxy!.relays.length;
     const feePayers: string[] = [];
     for (let i = 0; i < 10; i++) {
@@ -502,19 +565,20 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     const gateChecks = proxy!.relays.slice(relaysFrom).filter((r) => r.path.endsWith("/x402/gate_checks"));
     expect(gateChecks).toHaveLength(10);
     if (feePayers.length === 0) {
-      log("§3h.2: the connection offers no Solana devnet entry; fee payers not measured");
+      log("step 5: the connection offers no Solana devnet entry; fee payers not measured");
       return;
     }
     expect(feePayers).toHaveLength(10);
     const distinct = [...new Set(feePayers)];
-    log(`§3h.2: ${distinct.length} distinct Solana fee payers in 10 gate checks: ${distinct.join(", ")}`);
+    log(`step 5: ${distinct.length} distinct Solana fee payers in 10 gate checks: ${distinct.join(", ")}`);
   });
 
-  it("4 · close() drains; Lago has both events, and the wallet's ongoing usage rose", async () => {
-    expect(state.settled && state.signedIn, "steps 2 and 3 must have been served").toBe(true);
+  it("6 · close() drains; Lago has both events, and the wallet's ongoing usage rose", async () => {
+    expect(state.toppedUp && state.signedIn, "steps 2 and 3 must have been served").toBe(true);
     await x402!.close({ timeoutMs: 60_000 });
 
-    // One event per served call (a retried delivery is relayed again with the same id).
+    // One event per served call (a retried delivery is relayed again with the same id): steps 2
+    // and 3, and none for step 4's refused payment.
     const delivered = [
       ...new Map(
         proxy!.events.filter((e) => e.status >= 200 && e.status < 300).map((e) => [e.transactionId, e]),
@@ -534,7 +598,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
       expect(event.external_subscription_id).toBe(subscription);
       expect(event.properties).toMatchObject({ value: "1", target_wallet_code: walletCode });
     }
-    log(`step 4: Lago has both events (${delivered.map((e) => e.transactionId).join(", ")})`);
+    log(`step 6: Lago has both events (${delivered.map((e) => e.transactionId).join(", ")})`);
 
     const baseline = state.baseline!;
     const risen = await poll("the wallet's ongoing usage to rise", walletTimeoutMs, 10_000, async () => {
@@ -545,7 +609,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     });
     expect(risen.ongoing_usage_balance_cents).toBeGreaterThan(baseline.ongoing_usage_balance_cents);
     log(
-      `step 4: ongoing usage ${baseline.ongoing_usage_balance_cents} -> ${risen.ongoing_usage_balance_cents}, ` +
+      `step 6: ongoing usage ${baseline.ongoing_usage_balance_cents} -> ${risen.ongoing_usage_balance_cents}, ` +
         `ongoing balance ${baseline.ongoing_balance_cents} -> ${risen.ongoing_balance_cents} (cents)`,
     );
     expect(reports.map((r) => r.where)).toStrictEqual([]);

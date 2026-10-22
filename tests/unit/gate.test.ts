@@ -760,7 +760,7 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     ]);
   });
 
-  it("E8 pending → 503 Retry-After from reconcile_after", async () => {
+  it("E8 pending, a replay included → 503 Retry-After from reconcile_after", async () => {
     const { handle, reports, billed } = setup();
     const { header } = await paidHeader(handle);
     const reconcileAfter = new Date(Date.now() + 90_000).toISOString().replace(/\.\d+Z$/, "Z");
@@ -785,26 +785,69 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     expect(billed).toEqual([]);
   });
 
-  it("a replay is served with the original grant's external_subscription_id", async () => {
-    const { handle, billed } = setup();
+  /** Lago answers a payment it already settled from its row, whoever presents it again. */
+  const settledReplay: FakeAnswer = {
+    status: 200,
+    body: settlement({ replayed: true, external_subscription_id: "x402_sub_original_grant" }),
+  };
+
+  it("a settled replay on the first attempt → 409 payment_already_settled: not served, billed or reported", async () => {
+    const { handle, reports, billed } = setup();
     const { header } = await paidHeader(handle);
-    answers("credit_purchases", {
-      status: 200,
-      body: settlement({ replayed: true, external_subscription_id: "x402_sub_original_grant" }),
+    answers("credit_purchases", settledReplay);
+
+    expectRefusal(await handle({ "PAYMENT-SIGNATURE": header }), 409, { error: "payment_already_settled" });
+
+    expect(e8()).toHaveLength(1);
+    expect(billed).toEqual([]);
+    expect(reports).toEqual([]);
+  });
+
+  it("a forged PAYMENT-SIGNATURE carrying a settled authorization with a garbage signature → 409, never served", async () => {
+    const { handle, reports, billed } = setup();
+    // Lago finds a replay by the authorization's digest, which leaves the signature out, so a
+    // settled authorization read from the chain and wrapped with any signature is a replay.
+    const garbage = "0x" + "0f".repeat(65);
+    const { header } = await paidHeader(handle, (payment) => {
+      (payment.payload as { signature: string }).signature = garbage;
     });
+    answers("credit_purchases", settledReplay);
 
-    const outcome = served(await handle({ "PAYMENT-SIGNATURE": header }));
+    expectRefusal(await handle({ "PAYMENT-SIGNATURE": header }), 409, { error: "payment_already_settled" });
 
-    expect(outcome.headers["PAYMENT-RESPONSE"]).toEqual(expect.any(String));
-    expect(billed).toEqual([
-      { route: "generate", externalSubscriptionId: "x402_sub_original_grant", billing: outcome.billing },
-    ]);
+    expect(e8()).toHaveLength(1);
+    expect(e8()[0].rawBody).toContain(garbage);
+    expect(billed).toEqual([]);
+    expect(reports).toEqual([]);
   });
 
   const grantFailed: FakeAnswer = {
     status: 422,
     body: validationErrors({ base: ["credit_grant_failed"] }),
   };
+
+  it.each<[string, FakeAnswer]>([
+    ["a lost answer", { status: 200, destroySocket: true }],
+    ["a 502", { status: 502 }],
+    ["credit_grant_failed", grantFailed],
+  ])(
+    "a settled replay on the retry after %s is the request's own payment: served once with the grant's subscription",
+    async (_name, first) => {
+      const { handle, reports, billed } = setup();
+      const { header } = await paidHeader(handle);
+      answers("credit_purchases", first, settledReplay);
+
+      const outcome = served(await handle({ "PAYMENT-SIGNATURE": header }));
+
+      expect(outcome.headers["PAYMENT-RESPONSE"]).toEqual(expect.any(String));
+      expect(e8()).toHaveLength(2);
+      expect(e8()[1].rawBody).toBe(e8()[0].rawBody);
+      expect(billed).toEqual([
+        { route: "generate", externalSubscriptionId: "x402_sub_original_grant", billing: outcome.billing },
+      ]);
+      expect(reports).toEqual([]);
+    },
+  );
 
   it("credit_grant_failed → one identical E8 retry → served", async () => {
     const { handle, reports, billed } = setup();

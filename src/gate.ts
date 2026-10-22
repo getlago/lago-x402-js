@@ -335,11 +335,14 @@ export class Gate {
     } catch (err) {
       if (!(err instanceof LagoUnreachableError)) throw err;
       // A lost answer may hide a settlement: resending is safe (Lago answers a replay from its
-      // row). A timeout is not retried: the agent's own resend reaches that row (ruling R2).
+      // row, and the retry serves it). A timeout is not retried: Lago may still be settling, so
+      // the agent is asked to come back, and then signs in to use the credits it bought.
       if (err.reason === "network" && attempt === 1) return { kind: "retry", cause: err };
       return { kind: "done", outcome: this.#paymentPending(err) };
     }
-    if (answer.status === 200) return { kind: "done", outcome: this.#settled(purchase, answer.body) };
+    if (answer.status === 200) {
+      return { kind: "done", outcome: this.#settled(purchase, answer.body, attempt) };
+    }
     const decision = mapCreditPurchaseRefusal(answer, attempt);
     if (decision.kind === "retry") {
       return { kind: "retry", cause: new LagoApiError("credit_purchases", answer.status, answer.body) };
@@ -351,8 +354,18 @@ export class Gate {
     return { kind: "done", outcome };
   }
 
-  /** An E8 200. Money may have moved, so an unreadable answer is "pending", never a 402. */
-  #settled(purchase: Purchase, body: unknown): GateOutcome {
+  /** An E8 200. Money may have moved, so an unreadable answer is "pending", never a 402.
+   *
+   * A settled replay is served on the retry only. Lago answers a payment it already settled
+   * from its row before checking anything else, for as long as it keeps the row, and finds that
+   * row by a digest that leaves the signature out: anyone who reads a settled authorization from
+   * the chain can present it again, under any signature, against a fresh 402, and would be
+   * served on the payer's subscription. On a request's first attempt a settled replay is
+   * therefore someone presenting a payment again (409 `payment_already_settled`, nothing billed
+   * or reported); on the retry it is this request's own payment, answered again after a lost
+   * answer, a 5xx or `credit_grant_failed`. A pending replay asks the agent to come back, like
+   * any pending purchase. */
+  #settled(purchase: Purchase, body: unknown, attempt: 1 | 2): GateOutcome {
     let settlement: ReturnType<typeof parseSettlement>;
     try {
       settlement = parseSettlement(body);
@@ -367,6 +380,7 @@ export class Gate {
         retryAfterFrom(settlement.reconcileAfter, Date.now()),
       );
     }
+    if (settlement.replayed && attempt === 1) return refusal(409, { error: "payment_already_settled" });
     return {
       action: "serve",
       headers: { "PAYMENT-RESPONSE": paymentResponseHeader(settlement), "Cache-Control": "private" },

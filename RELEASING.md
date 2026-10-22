@@ -40,7 +40,7 @@ The workflow itself is hardened in depth, so a misconfigured environment alone c
 - Least-privilege `permissions: contents: read` default — only `publish` gets `id-token: write`, only `release` gets `contents: write`.
 - Every third-party action pinned to a full commit SHA so a re-pointed tag can't inject code into the token-minting job (kept fresh by `.github/dependabot.yml`).
 - The `publish` job carries `if: startsWith(github.ref, 'refs/tags/v')`, so even without the environment rule it refuses to run on a non-tag ref.
-- `publish` builds from source (`npm ci` from the committed lockfile + `npm run build`) and runs `npm publish --provenance`. npm provenance is bound to the build, so it can't be attached to a pre-packed tarball — the package must be built in the publishing job. The reinstall is reproducible (pinned lockfile) and the job runs only on a `v*.*.*` tag behind the approval gate.
+- `publish` builds from source (`npm ci --ignore-scripts` from the committed lockfile, so no dependency's install script runs in the job that can mint the OIDC token, + `npm run build`) and runs `npm publish --provenance`. npm provenance is bound to the build, so it can't be attached to a pre-packed tarball — the package must be built in the publishing job. The reinstall is reproducible (pinned lockfile) and the job runs only on a `v*.*.*` tag behind the approval gate.
 
 The `--provenance` flag attaches a signed sigstore attestation that ties the published artifact to this exact GitHub Actions run/commit — visible as the "Built and signed on GitHub Actions" badge on the npm package page.
 

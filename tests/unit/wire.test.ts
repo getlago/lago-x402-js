@@ -310,7 +310,7 @@ describe("rendering", () => {
     expect(info.version).toBe("1");
   });
 
-  it("omits resources and never sends an empty statement", async () => {
+  it("omits resources and renders the configured statement as is", async () => {
     const url = resourceUrl(ORIGIN, "/v1/generate");
     const configured = renderSignIn({
       origin: ORIGIN,
@@ -333,14 +333,8 @@ describe("rendering", () => {
       version: "1",
     });
 
-    const empty = renderSignIn({
-      origin: ORIGIN,
-      resourceUrl: url,
-      statement: "",
-      signInChains: [BASE_SEPOLIA],
-    });
+    // An empty statement never gets here: the config refuses it (config.test.ts).
     expect(DEFAULT_SIGN_IN_STATEMENT).toBe("Sign in to use your prepaid credits.");
-    expect(empty.info.statement).toBe(DEFAULT_SIGN_IN_STATEMENT);
 
     // What the official client signs and sends back carries neither key either.
     const { header } = challenge();

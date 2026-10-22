@@ -11,8 +11,8 @@ import type { Network, PaymentPayload, PaymentRequirements, ResourceInfo } from 
 import { Base64EncodedRegex, safeBase64Decode } from "@x402/core/utils";
 import { LagoApiError, type LagoEndpoint } from "./errors.js";
 
-/** Used when the configured statement is empty: Lago refuses `statement: ""`, and the official
- * EVM and Solana formatters disagree on how to sign one. */
+/** The sign-in statement when the config sets none. The config refuses an empty one: Lago refuses
+ * `statement: ""`, and the official EVM and Solana formatters disagree on how to sign one. */
 export const DEFAULT_SIGN_IN_STATEMENT = "Sign in to use your prepaid credits.";
 
 /** The `extensions` key of the sign-in challenge (`@x402/extensions` `SIGN_IN_WITH_X`). */
@@ -240,7 +240,7 @@ export function renderSignIn(o: {
     info: {
       domain: o.origin.host,
       uri: o.resourceUrl,
-      statement: o.statement === "" ? DEFAULT_SIGN_IN_STATEMENT : o.statement,
+      statement: o.statement,
       version: "1",
       nonce: newNonce(),
       issuedAt: new Date().toISOString(),

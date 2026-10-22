@@ -766,6 +766,48 @@ describe("reporting", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expectUnavailable(await handleRequest(x402, "generate", request()));
   });
+
+  it("a refused boot is reported once (boot), with the error it rejects with, before rejecting", async () => {
+    // R28: an adapter awaiting the promise per request handles the rejection, so Node raises no
+    // unhandled rejection; this report is then the only trace of the refusal.
+    const marker = "body-marker-" + randomUUID();
+    answers("gate_checks", {
+      status: 404,
+      body: { ...notFound("plan"), error: `Not Found ${marker}`, error_details: { plan: [`${marker} x`] } },
+    });
+    let rejected = false;
+    let reportedBeforeRejection: boolean | undefined;
+    const booting = createLagoX402(
+      config({
+        onError: (err, where) => {
+          reports.push({ err: err as Error, where });
+          reportedBeforeRejection = !rejected;
+        },
+      }),
+      FAST,
+    );
+    void booting.catch(() => (rejected = true));
+
+    const err = await rejection(booting);
+
+    expect(err.reason).toBe("Lago gate_checks answered 404 (plan_not_found)");
+    expect(reportedBeforeRejection).toBe(true);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].where).toBe("boot");
+    expect(reports[0].err).toBe(err);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(`[lago-x402] boot failed: ${err.message}`);
+    const printed = JSON.stringify(warn.mock.calls) + err.message + String(err.stack);
+    expect(printed).not.toContain(apiKey);
+    expect(printed).not.toContain(marker);
+  });
+
+  it("an invalid config rejects without a report: it rejects at once, so Node's unhandled rejection stays loud", async () => {
+    const err = await rejection(createLagoX402(config({ origin: "http://merchant.example" }), FAST));
+    expect(err.route).toBeNull();
+    expect(reports).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
 });
 
 describe("public entry point", () => {

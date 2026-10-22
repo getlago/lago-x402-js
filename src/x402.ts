@@ -98,7 +98,13 @@ export async function createLagoX402(
   const refused = await boot.start();
   if (refused.length > 0) {
     boot.stop(); // R22: no timer outlives a rejected boot.
-    throw refusalError(refused);
+    const err = refusalError(refused);
+    // R28: reported before rejecting. An adapter given this promise awaits it per request, so a
+    // request in flight handles the rejection and Node raises no unhandled rejection: without
+    // this report the refusal would leave no trace. An invalid config (validateConfig above)
+    // rejects at once, before any handler can be attached, so it is left to Node.
+    report(err, "boot");
+    throw err;
   }
 
   const x402: LagoX402 = Object.freeze({

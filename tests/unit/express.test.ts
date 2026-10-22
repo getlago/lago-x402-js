@@ -13,7 +13,7 @@ import { createLagoX402, LagoX402ConfigError, type LagoX402, type LagoX402Config
 import type { LagoX402ErrorWhere } from "../../src/index.js";
 import { evmAgent } from "../support/agent.js";
 import { startFakeLago, type FakeAnswer, type FakeLago, type RecordedRequest } from "../support/fake-lago.js";
-import { gateCheckChallenge, gateCheckPass } from "../support/fixtures.js";
+import { billableMetric, gateCheckChallenge, gateCheckPass } from "../support/fixtures.js";
 import {
   CATCH_ALL_BODY,
   EXPRESS,
@@ -231,10 +231,32 @@ describe.each(["express", "express4"] as const)("%s", (fw) => {
       expect(events()[0].external_subscription_id).toBe(SUBSCRIPTION);
     });
 
-    it("a rejected promise answers 503 unavailable, never serves, and reports nothing", async () => {
-      const rejected = Promise.reject(new LagoX402ConfigError(ROUTE, "refused by Lago"));
-      rejected.catch(() => {}); // the app's own await of createLagoX402 surfaces it
-      const app = await startApp(fw, rejected, { usage: 1 });
+    it("a request in flight while boot refuses answers 503, and the refusal is reported though the app never awaited it", async () => {
+      // The request's `await` is the only handler on the boot promise, attached before the
+      // rejection, so Node raises no unhandled rejection: the report is the only trace (R28).
+      const inFlight = deferred<void>();
+      lago.on("billable_metrics", async () => {
+        await inFlight.promise;
+        return { status: 200, body: billableMetric({ aggregation_type: "count_agg" }) };
+      });
+      const booting = createLagoX402(config("http://127.0.0.1:3000"));
+      let served = false;
+      const app = await serve(() => {
+        const express = EXPRESS[fw]();
+        express.post(
+          PATH,
+          (_req: Request, _res: Response, next: NextFunction) => {
+            inFlight.resolve();
+            next();
+          },
+          lagoX402(booting, ROUTE),
+          (_req: Request, res: Response) => {
+            served = true;
+            res.json(HANDLER_BODY);
+          },
+        );
+        return express;
+      });
       cleanups.push(app.close);
 
       const res = await fetch(app.url + PATH, { method: "POST", headers: { "SIGN-IN-WITH-X": SIGN_IN } });
@@ -243,8 +265,18 @@ describe.each(["express", "express4"] as const)("%s", (fw) => {
       expect(res.headers.get("cache-control")).toBe("no-store");
       expect(res.headers.get("content-type")).toBe("application/json");
       expect(await res.json()).toStrictEqual({ error: "unavailable" });
-      expect(lago.requests).toHaveLength(0);
-      expect(warn).not.toHaveBeenCalled();
+      expect(served).toBe(false);
+      expect(e7()).toHaveLength(0);
+      const refusal = await booting.then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(refusal).toBeInstanceOf(LagoX402ConfigError);
+      expect(reports).toHaveLength(1);
+      expect(reports[0].where).toBe("boot");
+      expect(reports[0].err).toBe(refusal);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(`[lago-x402] boot failed: ${(refusal as Error).message}`);
     });
 
     it("a promise of an instance without that route answers 503 and reports gate.check", async () => {

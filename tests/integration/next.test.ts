@@ -2,9 +2,14 @@
  * and served with `next start` on 127.0.0.1, against the fake Lago. The fixture imports the built
  * package, so `npm run build` comes first (`npm run build && npm run test:next`).
  *
- * Proves the adapter loads inside a real Next build and bills through Next's own `after()`: the
- * usage event goes out only once the response has gone out (a response held mid-body sends
- * nothing), and its delivery, which the fake Lago delays by 2 s, outlives the request. */
+ * Proves, with the fake Lago holding each event's answer for 2 s, that the adapter loads inside a
+ * real Next build and bills through Next's own `after()`:
+ * - the response never waits for the event's delivery;
+ * - the event goes out only once the response has gone out (a response held mid-body sends
+ *   nothing);
+ * - Next holds the delivery as `after()` work: on SIGTERM, `next start` exits only once Lago has
+ *   answered the event (it awaits its `waitUntil` work before exiting). A task that let the
+ *   delivery run loose would let it exit first. */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -169,7 +174,7 @@ describe("next build && next start", () => {
     expect(deliveries).toHaveLength(0);
   });
 
-  it("a paid call is answered with PAYMENT-RESPONSE and private before Lago answers its event, which is still delivered afterwards", async () => {
+  it("a paid call is answered with PAYMENT-RESPONSE and private without waiting for Lago to answer its event", async () => {
     const pay = wrapFetchWithPayment(fetch, evmAgent({ signIn: false, maxAmountPerPayment: "$10" }).http);
 
     const res = await pay(origin + PATH, { method: "POST" });
@@ -217,6 +222,33 @@ describe("next build && next start", () => {
     });
     await sleep(500);
     expect(deliveries).toHaveLength(1);
+    expect(output).not.toContain("[lago-x402]");
+  });
+
+  // Last: it stops the server.
+  it("on SIGTERM, next start exits only once Lago has answered the event after() holds", async () => {
+    const started = server!;
+    const exited = new Promise<{ at: number; code: number | null }>((resolve) =>
+      started.once("exit", (code) => resolve({ at: performance.now(), code })),
+    );
+
+    const res = await fetch(origin + PATH, { method: "POST", headers: { "SIGN-IN-WITH-X": SIGN_IN } });
+    expect(res.status).toBe(200);
+    await res.arrayBuffer();
+    // The client has its whole response, and Lago is still holding the event's answer.
+    expect(deliveries.every((d) => d.answeredAt === undefined)).toBe(true);
+    started.kill("SIGTERM");
+    const exit = await exited;
+
+    // 143: Next's own shutdown (close the server, await pending `after()` work, exit).
+    expect(exit.code).toBe(143);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].answeredAt).toBeDefined();
+    expect(exit.at).toBeGreaterThan(deliveries[0].answeredAt!);
+    expect(deliveries[0].event).toMatchObject({
+      external_subscription_id: SUBSCRIPTION,
+      properties: { value: "3" },
+    });
     expect(output).not.toContain("[lago-x402]");
   });
 });

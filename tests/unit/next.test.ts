@@ -570,6 +570,27 @@ describe("next", () => {
       expect(await settle()).toStrictEqual([]);
     });
 
+    it("after a payment, a Response without an HTTP status is replaced by 503 payment_pending, reported, billed nothing", async () => {
+      const { x402, settle } = await booted();
+      const handler = withLagoX402(x402, ROUTE, async () => ({ response: Response.error(), usage: 1 }));
+      const req = await paidRequest(handler);
+
+      const { result: res, tasks } = await call(handler, req);
+
+      expect(lago.requests.filter((r) => r.route === "credit_purchases")).toHaveLength(1);
+      expect(res.status).toBe(503);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(res.headers.get("retry-after")).toBe("30");
+      expect(res.headers.get("payment-response")).toBeNull();
+      expect(await res.json()).toStrictEqual({ error: "payment_pending" });
+      expect(tasks).toHaveLength(0);
+      expect(await settle()).toStrictEqual([]);
+      expect(reports.map((r) => r.where)).toStrictEqual(["gate.purchase"]);
+      expect(reports[0].err.message).toBe(
+        `lago-x402 route "${ROUTE}": a paid call's response could not be served`,
+      );
+    });
+
     it("a NextResponse keeps its cookies and its own headers, with private merged in", async () => {
       const { x402 } = await booted();
       const handler = withLagoX402(x402, ROUTE, async () => {

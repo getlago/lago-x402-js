@@ -45,9 +45,25 @@ export interface CallBilling {
   finish(status: number, readUsage: () => unknown): Promise<void>;
 }
 
+/** The gate's own answer, a challenge or a refusal, sent instead of the handler's. */
+export interface GateAnswer {
+  action: "respond";
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
 export type GateOutcome =
-  | { action: "respond"; status: number; headers: Record<string, string>; body: string }
-  | { action: "serve"; headers: Record<string, string>; billing: CallBilling };
+  | GateAnswer
+  | {
+      action: "serve";
+      headers: Record<string, string>;
+      billing: CallBilling;
+      /** What to answer instead when the handler's response cannot go out as served (it cannot be
+       * made private). Nothing is billed: 503 `unavailable`, or after a payment, since the money
+       * has moved, 503 `payment_pending` reported as `gate.purchase`. */
+      unserved: () => GateAnswer;
+    };
 
 export interface GateDeps {
   client: LagoClient;
@@ -132,7 +148,7 @@ function refusal(
   status: number,
   body: { error: string; reason?: string },
   retryAfterSeconds?: number,
-): GateOutcome {
+): GateAnswer {
   return {
     action: "respond",
     status,
@@ -146,7 +162,7 @@ function refusal(
 }
 
 /** 503 `unavailable`: the gate's fail-closed answer, also given for a route that is not active. */
-export const unavailable = (): GateOutcome => refusal(503, { error: "unavailable" });
+export const unavailable = (): GateAnswer => refusal(503, { error: "unavailable" });
 
 /** E7's body: the one builder for the gate's three legs and the boot check, so boot probes Lago
  * with exactly the bytes leg 1 sends. `siwx` only on leg 2, exactly as decoded. */
@@ -222,6 +238,7 @@ export class Gate {
       action: "serve",
       headers: { "Cache-Control": "private" },
       billing: this.#billing(route, check.externalSubscriptionId),
+      unserved: unavailable,
     };
   }
 
@@ -381,10 +398,15 @@ export class Gate {
       );
     }
     if (settlement.replayed && attempt === 1) return refusal(409, { error: "payment_already_settled" });
+    const { name } = purchase.route;
     return {
       action: "serve",
       headers: { "PAYMENT-RESPONSE": paymentResponseHeader(settlement), "Cache-Control": "private" },
       billing: this.#billing(purchase.route, settlement.externalSubscriptionId),
+      unserved: () =>
+        this.#paymentPending(
+          new Error(`lago-x402 route "${name}": a paid call's response could not be served`),
+        ),
     };
   }
 
@@ -443,7 +465,7 @@ export class Gate {
     return unavailable();
   }
 
-  #paymentPending(err: Error): GateOutcome {
+  #paymentPending(err: Error): GateAnswer {
     this.#notify(err, "gate.purchase");
     return refusal(503, { error: "payment_pending" }, DEFAULT_RETRY_AFTER_SECONDS);
   }

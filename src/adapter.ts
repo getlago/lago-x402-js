@@ -93,13 +93,6 @@ export function responseOf(outcome: Respond): Response {
   return new Response(outcome.body, { status: outcome.status, headers: outcome.headers });
 }
 
-/** 503 `unavailable`, the fail-closed answer, as a fetch `Response`. */
-export function unavailableResponse(): Response {
-  const outcome = unavailable();
-  if (outcome.action !== "respond") throw new Error("lago-x402: not a response");
-  return responseOf(outcome);
-}
-
 /** `response` with the serve headers added and `private` merged into its final `Cache-Control`.
  * A response with immutable headers (`fetch()`) is rebuilt first, keeping a 204/205/304 without
  * a body; the result is `response` itself whenever it could be changed in place. Throws when it

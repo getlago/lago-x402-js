@@ -28,7 +28,7 @@ import {
   type Respond,
   type Serve,
 } from "./adapter.js";
-import { unavailable, type CallBilling, type GateRequest } from "./gate.js";
+import type { CallBilling, GateRequest } from "./gate.js";
 import type { LagoX402 } from "./x402.js";
 
 /** The variable the handler reports usage through: `c.set("lagoUsage", n)`. */
@@ -107,9 +107,9 @@ async function serve(c: Context<Env>, next: Next, outcome: Serve): Promise<void>
   try {
     keepPrivate(c, outcome.headers);
   } catch {
-    // A served response never goes out without `private`: fail closed instead.
-    const fallback = unavailable();
-    if (fallback.action === "respond") replace(c, responseOf(fallback));
+    // A served response never goes out without `private`: the gate's answer instead, billed
+    // nothing (`payment_pending` after a payment, since the money has moved).
+    replace(c, responseOf(outcome.unserved()));
     return;
   }
   if (outgoing === null) void bill(outcome.billing, () => c.res.status, readUsage);

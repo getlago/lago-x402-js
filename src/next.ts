@@ -15,20 +15,13 @@
  *
  * Served responses get `PAYMENT-RESPONSE` after a payment and `private` merged into whatever
  * `Cache-Control` the handler sends (a response with immutable headers, as `fetch()` returns, is
- * rebuilt). The gate's own answers are `Response`s and never reach the handler. A handler that
- * throws, or returns no response, throws to Next, which answers 500; nothing is billed. Only
- * `after` is imported from `next` (`next/server.js`: `next` has no `exports` map, so plain Node
- * ESM cannot resolve `next/server`). */
+ * rebuilt; one that cannot be, as `Response.error()`, is replaced by 503 `unavailable`, or
+ * `payment_pending` after a payment). The gate's own answers are `Response`s and never reach the
+ * handler. A handler that throws, or returns no response, throws to Next, which answers 500;
+ * nothing is billed. Only `after` is imported from `next` (`next/server.js`: `next` has no
+ * `exports` map, so plain Node ESM cannot resolve `next/server`). */
 import { after } from "next/server.js";
-import {
-  bill,
-  checkRoute,
-  decide,
-  responseOf,
-  unavailableResponse,
-  withServeHeaders,
-  type X402Source,
-} from "./adapter.js";
+import { bill, checkRoute, decide, responseOf, withServeHeaders, type X402Source } from "./adapter.js";
 import type { CallBilling, GateRequest } from "./gate.js";
 import type { LagoX402 } from "./x402.js";
 
@@ -67,8 +60,9 @@ async function gate<Ctx>(
   try {
     served = withServeHeaders(response, outcome.headers);
   } catch {
-    // A served response never goes out without `private`: fail closed instead, billed nothing.
-    return unavailableResponse();
+    // A served response never goes out without `private`: the gate's answer instead, billed
+    // nothing (`payment_pending` after a payment, since the money has moved).
+    return responseOf(outcome.unserved());
   }
   billAfter(outcome.billing, served.status, readUsage);
   return served;

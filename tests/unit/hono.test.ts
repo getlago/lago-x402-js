@@ -807,6 +807,29 @@ describe("hono", () => {
       expect(await settle()).toStrictEqual([]);
     });
 
+    it("after a payment, a response that cannot be made private is replaced by 503 payment_pending, reported, billed nothing", async () => {
+      const { app, settle } = await bespoke((hono, x402) => {
+        hono.post(PATH, lagoX402(x402, ROUTE), (c) => {
+          c.set("lagoUsage", 1);
+          return Response.error();
+        });
+      });
+
+      const res = await pay(app.url + PATH);
+
+      expect(lago.requests.filter((r) => r.route === "credit_purchases")).toHaveLength(1);
+      expect(res.status).toBe(503);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(res.headers.get("retry-after")).toBe("30");
+      expect(res.headers.get("payment-response")).toBeNull();
+      expect(await res.json()).toStrictEqual({ error: "payment_pending" });
+      expect(await settle()).toStrictEqual([]);
+      expect(reports.map((r) => r.where)).toStrictEqual(["gate.purchase"]);
+      expect(reports[0].err.message).toBe(
+        `lago-x402 route "${ROUTE}": a paid call's response could not be served`,
+      );
+    });
+
     it("a handler that throws is answered 500 by Hono, still private, and billed nothing", async () => {
       lago.on("gate_checks", passOnSignIn);
       const error = vi.spyOn(console, "error").mockImplementation(() => {});

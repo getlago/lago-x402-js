@@ -46,6 +46,8 @@ npm install lago-x402
 
 Requires Node `^20.19` or `>=22.12`, plus one of `express` (4.21+ or 5), `hono` (4.6+) with `@hono/node-server`, or `next` (16). The package is ESM; a CommonJS app can `require()` it on those Node versions. Its one runtime dependency is `@x402/core`.
 
+With TypeScript and Express, also install `@types/express`: the types of `lago-x402/express` import Express's own.
+
 ## Before you start: set up Lago
 
 1. **A lago-api with sign-in-with-x on gate checks.** At the time of writing (October 2026) it lives on lago-api's `feat/x402/gate-check-sign-in` branch; `main` still takes an unproven `agent_address` and ignores the sign-in. `createLagoX402` refuses at boot a Lago whose challenge has no `sign_in_chains`, with the reason _"this Lago does not support sign-in-with-x on gate checks"_.
@@ -161,14 +163,19 @@ Hono 4.6+ on Node, served by `@hono/node-server`: the call is billed once the No
 App Router route handlers on the Node runtime (the default), Next 16.
 
 ```ts
-// app/api/generate/route.ts
+// x402.ts: one instance for the whole app
 import { createLagoX402 } from "lago-x402";
-import { withLagoX402 } from "lago-x402/next";
-import { generate } from "../../../generate"; // your code
-import { config } from "../../../lago";
+import { config } from "./lago";
 
 // Not awaited: each request awaits it, and answers 503 until the routes are checked.
-const x402 = createLagoX402(config);
+export const x402 = createLagoX402(config);
+```
+
+```ts
+// app/api/generate/route.ts
+import { withLagoX402 } from "lago-x402/next";
+import { generate } from "../../../generate"; // your code
+import { x402 } from "../../../x402";
 
 export const POST = withLagoX402(x402, "generate", async (req) => {
   const result = await generate(await req.json());
@@ -176,29 +183,24 @@ export const POST = withLagoX402(x402, "generate", async (req) => {
 });
 ```
 
+Create the instance once, in a module every route file imports, as above. Each `createLagoX402(...)` checks every configured route against Lago at boot and keeps its own queue of usage events: one per route file would boot the whole config once per file, and leave a queue per file for `close()` to drain.
+
 The handler returns `{ response, usage }`. A bare `Response` reports no usage, so the call is served unbilled and `usage.extract` is reported. The event goes out through Next's `after()`, once the response has gone out.
 
 **`next build` evaluates route modules.** With `createLagoX402` at module scope, as above, the build machine boots against Lago while Next collects page data: it needs the config and network access to Lago at build time. Without the config, Next prints the unhandled `LagoX402ConfigError` and the build still completes. To boot on the first request instead, hand `withLagoX402` a lazy promise-like:
 
 ```ts
-// app/api/generate/route.ts
+// x402.ts: one lazy instance for the whole app; route files import it as above
 import { createLagoX402, type LagoX402 } from "lago-x402";
-import { withLagoX402 } from "lago-x402/next";
-import { generate } from "../../../generate"; // your code
-import { config } from "../../../lago";
+import { config } from "./lago";
 
 let instance: Promise<LagoX402> | undefined;
-const x402: PromiseLike<LagoX402> = {
+export const x402: PromiseLike<LagoX402> = {
   then(onfulfilled, onrejected) {
     instance ??= createLagoX402(config); // first request only; never at `next build`
     return instance.then(onfulfilled, onrejected);
   },
 };
-
-export const POST = withLagoX402(x402, "generate", async (req) => {
-  const result = await generate(await req.json());
-  return { response: Response.json(result), usage: result.tokens };
-});
 ```
 
 The first request then waits for the boot checks, and a route name that is not configured is found per request (503, reported as `gate.check`) rather than when the handler is wrapped.
@@ -207,11 +209,15 @@ The first request then waits for the boot checks, and a route name that is not c
 
 1. **No credentials.** One gate check, then `402` with `PAYMENT-REQUIRED`, `Cache-Control: no-store` and body `{}`. The header offers the top-up (`topUpAmountCents` in USDC) on each network of your connection, and a sign-in-with-x challenge. Its `domain` and `uri` come from your configured `origin` and the request's path, never from the `Host` header, and every 402 carries a fresh nonce (16 random bytes).
 2. **`SIGN-IN-WITH-X`.** One gate check carrying the sign-in proof, which Lago verifies. The call is served from the agent's credits when they cover `estimatedCallCostCents`, and the proof's nonce is then used up; otherwise the agent gets a 402 to top up.
-3. **`PAYMENT-SIGNATURE`.** A fresh gate check, then the payment must match one of the fresh offers exactly: same scheme, network, asset, amount, pay-to, timeout and `extra` (only Solana's `extra.feePayer` may differ). A payment for a changed amount, pay-to or terms gets a fresh 402 (`stale_challenge`), and nothing is charged. A matching payment goes to Lago's credit purchase, which verifies and settles it, creates the agent's customer, wallet and subscription on its first purchase, and grants the credits. The call is served with `PAYMENT-RESPONSE`.
+3. **`PAYMENT-SIGNATURE`.** A fresh gate check, then the payment must match one of the fresh offers exactly: same scheme, network, asset, amount, pay-to, timeout and `extra` (only Solana's `extra.feePayer` may differ). A payment for a changed amount, pay-to or terms gets a fresh 402 (`stale_challenge`), and nothing is charged. A matching payment goes to Lago's credit purchase, which verifies and settles it, creates the agent's customer, wallet and subscription on its first purchase, and grants the credits. The call is served with `PAYMENT-RESPONSE`, once: the same payment presented again gets 409 `payment_already_settled`.
 
-When a request carries both headers, the payment wins and the sign-in is ignored. Served responses get `private` merged into their `Cache-Control`, whatever your handler set.
+When a request carries both headers, the payment wins and the sign-in is ignored. Served responses get `private` merged into their `Cache-Control`, whatever your handler set. On Next.js and Hono, a response that cannot carry it (no HTTP status, as `Response.error()`) is replaced by 503 `unavailable`, or by 503 `payment_pending` after a payment.
+
+**A payment serves one request.** Lago answers a payment it has already settled from its record, before checking anything else, and recognizes it by its authorization, not its signature: anyone who reads a settled authorization from the chain could present it again. So the middleware serves that answer only on its own retry of the credit purchase, after a lost answer, a 5xx or `credit_grant_failed`. A settled payment presented in a new request, by the agent or anyone else, gets 409 `payment_already_settled`: nothing is served or billed. An agent whose paid request got 503 `payment_pending` does not resend the payment: it waits `Retry-After`, then starts over, signs in, and is served from the credits the payment bought.
 
 A request served from credits costs one gate check; a paid one, a gate check and a credit purchase (plus at most one retry of the purchase). Nothing is cached between requests.
+
+**Put a rate limiter in front of the gate.** Every request to a gated route costs a gate check, even one without credentials or with a payment header that cannot be decoded: nothing is cached, by design. On a connection with Solana networks, each challenge also makes Lago read the facilitator's fee payer (CDP's `/supported`), so a flood of anonymous requests can exhaust CDP's rate limit; Lago then answers `third_party_error`, and paying agents get 503 `unavailable` until it recovers. Limit requests per client (IP address, API key) before they reach the middleware.
 
 ## Configuration
 
@@ -250,7 +256,7 @@ A request served from credits costs one gate check; a paid one, a gate check and
 1. the billable metric must be `sum_agg` on `value`, with no expression, not recurring;
 2. a gate check without sign-in must answer a challenge with sign-in chains.
 
-If Lago refuses any route, the promise rejects with one `LagoX402ConfigError` naming every refused route and why, after reporting it (`onError(err, "boot")` and the log line). An unreachable Lago is not a refusal. On a 5xx, 408, 429, network error, timeout or `third_party_error`, the promise resolves; that route answers 503 `unavailable` and its check is retried in the background, from 1 s doubling to 60 s, reporting `boot` for each failed attempt. The retry timers never keep the process alive.
+If Lago refuses any route, the promise rejects with one `LagoX402ConfigError` naming every refused route and why, after reporting it (`onError(err, "boot")` and the log line). An unreachable Lago is not a refusal. On a 5xx, 408, 429, network error, timeout or `third_party_error`, the promise resolves; that route answers 503 `unavailable` and its check is retried in the background, from 1 s doubling to 60 s, reporting `boot` for each failed attempt. The retry timers never keep the process alive; a check already in flight can, until it ends: at most twice `gateCheckMs` (the metric read, then the gate check).
 
 The adapters take the instance or the promise. Given an instance, attaching a route name that is not configured throws `LagoX402ConfigError` at once. Given the promise, each request awaits it: 503 until it resolves, and 503 for good if it rejected (your own `await createLagoX402(...)` surfaces the error).
 
@@ -300,7 +306,8 @@ Refusals are JSON, `{"error": "<code>"}` (plus `"reason"` on a 401), with `Cache
 | Gate check passes a signed-in agent                                                                                                                                                                                                                                                                                                                                                                                                                      | served; the usage event goes to the subscription the gate check named                                                          | —                                          |
 | Gate check passes a request without a sign-in, or without `external_subscription_id`                                                                                                                                                                                                                                                                                                                                                                     | 503 `unavailable`                                                                                                              | `gate.check`                               |
 | Gate check challenges                                                                                                                                                                                                                                                                                                                                                                                                                                    | 402                                                                                                                            | —                                          |
-| Credit purchase settles the payment, or answers a resent one from its record                                                                                                                                                                                                                                                                                                                                                                             | served with `PAYMENT-RESPONSE`; the usage event goes to the subscription the purchase named                                    | —                                          |
+| Credit purchase settles the payment, or, on the middleware's own retry after a lost answer, a 5xx or `credit_grant_failed`, answers it from its record of that payment                                                                                                                                                                                                                                                                                   | served with `PAYMENT-RESPONSE`; the usage event goes to the subscription the purchase named                                    | —                                          |
+| Credit purchase answers a payment it had already settled (`replayed`) on the first attempt: the payment was presented again in a new request                                                                                                                                                                                                                                                                                                             | 409 `payment_already_settled`; not served, nothing billed                                                                      | —                                          |
 | Gate check refuses the sign-in (any `siwx` code, `nonce_already_used` included), or `SIGN-IN-WITH-X` cannot be decoded                                                                                                                                                                                                                                                                                                                                   | 401 `sign_in_rejected`, with the `reason`                                                                                      | —                                          |
 | `buyer_not_recognized` (gate check or credit purchase)                                                                                                                                                                                                                                                                                                                                                                                                   | 403 `buyer_not_recognized`                                                                                                     | —                                          |
 | Gate check `credit_purchase_pending`; credit purchase `pending`, `credit_purchase_pending`, `payment_already_recorded` or `invoice_payment_pending`                                                                                                                                                                                                                                                                                                      | 503 `payment_pending` + `Retry-After` (Lago's `reconcile_after` for a pending settlement, clamped to 1–3600 s; otherwise 30 s) | —                                          |
@@ -311,7 +318,7 @@ Refusals are JSON, `{"error": "<code>"}` (plus `"reason"` on a 401), with `Cache
 | Credit purchase `credit_grant_failed`                                                                                                                                                                                                                                                                                                                                                                                                                    | one retry with the identical request; then 503 `payment_pending` + `Retry-After: 30`                                           | `gate.purchase`, unless the retry recovers |
 | Credit purchase answer lost (network error), or any 5xx                                                                                                                                                                                                                                                                                                                                                                                                  | one retry within the 45 s budget (when at least 1 s is left); then 503 `payment_pending` + `Retry-After: 30`                   | `gate.purchase`                            |
 | Credit purchase times out (45 s)                                                                                                                                                                                                                                                                                                                                                                                                                         | 503 `payment_pending` + `Retry-After: 30`                                                                                      | `gate.purchase`                            |
-| Credit purchase answers a 200 the middleware cannot read, or anything fails after the credit purchase was called                                                                                                                                                                                                                                                                                                                                         | 503 `payment_pending` + `Retry-After: 30` (money may have moved)                                                               | `gate.purchase`                            |
+| Credit purchase answers a 200 the middleware cannot read, anything fails after the credit purchase was called, or (Next.js, Hono) the handler's response to a paid call cannot be made private                                                                                                                                                                                                                                                           | 503 `payment_pending` + `Retry-After: 30` (money may have moved)                                                               | `gate.purchase`                            |
 | Configuration refusals (`plan_*`, `charge_*`, `wallet_not_x402_enabled`, `subscription_not_active`, `subscription_external_id_taken`, `buyer_external_id_taken`, `wallet_limit_reached`, wallet-shape errors, `allowed_origins_not_configured`, gate check `amount_above_maximum`, `agent_address_family_unsupported`, `customer_not_refreshable`), `third_party_error`, `connection_not_found`, input 422s, 400, 401 or 403 from Lago, any other answer | 503 `unavailable`                                                                                                              | `gate.check` or `gate.purchase`            |
 | Gate check unreachable, or times out (5 s)                                                                                                                                                                                                                                                                                                                                                                                                               | 503 `unavailable`                                                                                                              | `gate.check`                               |
 | Route not active (boot checks still running or retrying, or refused), or not configured                                                                                                                                                                                                                                                                                                                                                                  | 503 `unavailable`                                                                                                              | `gate.check` when not configured           |
@@ -340,13 +347,13 @@ const x402 = await createLagoX402({
 
 `where` names the stage:
 
-| `where`         | What happened                                                                                                                                             |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `boot`          | A route's boot check failed: Lago refused it (`createLagoX402` rejects), or Lago was unreachable (the check is retried, and reported per failed attempt). |
-| `gate.check`    | A gate check failed or Lago refused the route's configuration, or a request named a route that is not configured. The agent got 503 `unavailable`.        |
-| `gate.purchase` | A credit purchase failed, or its outcome is unknown. The agent got 503 or 409. Money may have moved: these are worth a look.                              |
-| `usage.extract` | A served call reported no usage, or an invalid one. No event was sent: that call is unbilled.                                                             |
-| `usage.send`    | A usage event was not delivered: Lago refused it, every attempt failed, or the queue was full.                                                            |
+| `where`         | What happened                                                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `boot`          | A route's boot check failed: Lago refused it (`createLagoX402` rejects), or Lago was unreachable (the check is retried, and reported per failed attempt).                   |
+| `gate.check`    | A gate check failed or Lago refused the route's configuration, or a request named a route that is not configured. The agent got 503 `unavailable`.                          |
+| `gate.purchase` | A credit purchase failed, or its outcome is unknown, or a paid call's response could not be served. The agent got 503 or 409. Money may have moved: these are worth a look. |
+| `usage.extract` | A served call reported no usage, or an invalid one. No event was sent: that call is unbilled.                                                                               |
+| `usage.send`    | A usage event was not delivered: Lago refused it, every attempt failed, or the queue was full.                                                                              |
 
 `usage.extract` is the one to alert on: a handler that forgets to report usage serves its calls for free, and nothing else looks wrong.
 
@@ -437,7 +444,8 @@ console.log(res.status, await res.json());
   - `401 sign_in_rejected`, with a `reason`: the sign-in proof was refused. Sign the next 402's challenge.
   - `403 buyer_not_recognized`: Lago does not know the paying address and will not onboard it.
   - `409 payment_already_used`: this payment was already recorded against an invoice. Do not resend it.
-  - `503 payment_pending`, with `Retry-After`: the payment may have gone through. Wait, then resend the same request with the same `PAYMENT-SIGNATURE`: Lago answers it from its record of that payment and never charges it twice.
+  - `409 payment_already_settled`: this payment already settled and served its request; it never serves another. Sign in to use the credits it bought.
+  - `503 payment_pending`, with `Retry-After`: the payment may have gone through. Do not resend it: wait `Retry-After`, then start over. A stock client with the sign-in extension signs in and is served from the credits the payment bought once Lago has granted them (another `503 payment_pending` until then). A payment that already settled, resent, gets `409 payment_already_settled`.
   - `503 unavailable`: the API cannot check with Lago right now. Try again later.
 
 ## Measured behaviours and limitations
@@ -455,6 +463,7 @@ console.log(res.status, await res.json());
 11. **Usage values are sent as `String(n)`.** Very large or very small numbers go out in exponent form (`1e+21`).
 12. **Lago always settles.** The middleware never records a payment settled elsewhere: lago-api has no such record mode yet, and every payment goes through Lago's credit purchase.
 13. **A local Lago behind mkcert TLS** needs Node to trust the mkcert root: set `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"` in the process environment. There is no TLS option in the library's config.
+14. **Changing an offer while a payment is pending.** If you change a route's `topUpAmountCents`, or the connection's pay-to, between an agent's `503 payment_pending` and its next attempt, that attempt gets the new offer, and a payment signed for the old one matches nothing (`stale_challenge`). An agent that signs in is served from its first payment's credits once Lago has granted them; one that does not sign in, as a stock client without the sign-in extension, pays the new top-up. The first payment's credits are kept in its wallet either way.
 
 ## Development
 
@@ -471,7 +480,7 @@ npm run test:next      # a real `next build && next start` (after `npm run build
 
 ### Live test
 
-`npm run test:live` runs the three legs against a real Lago on Base Sepolia: a 402, a top-up paid by an agent without sign-in, the same key signing in and served from its credits, and both usage events found in Lago. It is skipped unless `LAGO_API_URL`, `LAGO_API_KEY` and `X402_BUYER_EVM_PRIVATE_KEY` (a funded Base Sepolia buyer) are set. Optional: `LAGO_X402_CONNECTION_CODE`, `LIVE_PLAN_CODE`, `LIVE_METRIC_CODE`, `LIVE_WALLET_CODE`, `LIVE_ORIGIN` (default `http://localhost:4021`), `LIVE_TOP_UP_CENTS` (default 3) and `LIVE_WALLET_TIMEOUT_MS`.
+`npm run test:live` runs the three legs against a real Lago on Base Sepolia: a 402, a top-up paid by an agent without sign-in (should Lago still be settling it, the agent waits and signs in rather than resending the payment), the same key signing in and served from its credits, the paid call's `PAYMENT-SIGNATURE` sent again and refused with 409 `payment_already_settled`, and both usage events found in Lago. It is skipped unless `LAGO_API_URL`, `LAGO_API_KEY` and `X402_BUYER_EVM_PRIVATE_KEY` (a funded Base Sepolia buyer) are set. Optional: `LAGO_X402_CONNECTION_CODE`, `LIVE_PLAN_CODE`, `LIVE_METRIC_CODE`, `LIVE_WALLET_CODE`, `LIVE_ORIGIN` (default `http://localhost:4021`), `LIVE_TOP_UP_CENTS` (default 3) and `LIVE_WALLET_TIMEOUT_MS`.
 
 Set Lago up once with `node scripts/live-setup.mjs`. It reads `LAGO_API_URL`, `LAGO_API_KEY`, `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`, `LIVE_EVM_PAYOUT` and, optionally, `LIVE_SVM_PAYOUT`, and creates the metric, the plan and the connection through Lago's API.
 
@@ -483,6 +492,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the rest.
 
 - The Lago API key is sent only to `apiUrl`, never across a redirect. The library reads no environment variables.
 - `PAYMENT-SIGNATURE` and `SIGN-IN-WITH-X` are bearer credentials. The middleware never logs them or puts them in an error; make sure your own request logging does not either.
+- A payment Lago already settled is never served again: presented in a new request, by anyone and under any signature, it gets 409 `payment_already_settled`.
+- Put a rate limiter in front of the gate: see [How a request is handled](#how-a-request-is-handled).
 - The sign-in challenge and the 402's `resource.url` come from your configured `origin`, never from `Host` or `X-Forwarded-Host`.
 
 Found a vulnerability? See [SECURITY.md](SECURITY.md).

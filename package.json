@@ -1,7 +1,7 @@
 {
   "name": "lago-x402",
   "version": "0.1.0",
-  "description": "x402 v2 payment-gate middleware backed by Lago.",
+  "description": "Charge AI agents per call with x402 payments and Lago prepaid credits: middleware for Express, Hono and Next.js.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -50,9 +50,16 @@
   "keywords": [
     "lago",
     "x402",
+    "billing",
     "payments",
+    "metering",
+    "prepaid-credits",
+    "usdc",
+    "ai-agents",
     "middleware",
-    "billing"
+    "express",
+    "hono",
+    "nextjs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

@@ -1,18 +1,18 @@
-/** No secret ever leaks (Global Constraints; Review Focus 5).
+/** No secret ever leaks.
  *
- * Every failure the rest of the suite exercises (legs 1–3 refusals and the §3 rows, malformed and
- * oversized headers, timeouts, a lost E8 answer, usage extract/send failures, boot refusals and
- * unreachable boots) runs through the core (`handleRequest`) and through every adapter over real
- * HTTP, with headers the official x402 clients built over a real 402, so they carry real
- * signatures. Fake-Lago bodies carry planted markers in every place the middleware must not
- * surface. Everything an agent, an operator or a log could see is captured: each response's
- * status, headers (raw and decoded) and body, each `onError` argument (`message`, `stack`,
- * `JSON.stringify`, `util.inspect`, every own property), each boot rejection, each usage event
- * body and every `console.*` call. None may contain the API key, either header's value, the
- * payment's signature or EIP-3009 nonce, the sign-in's signature, a handler's exception text or
- * a marker; for the key and the cryptographic values not even a 10-character fragment (V8's
- * `JSON.parse` error quotes 10 characters of its input), and for the headers no 24-character
- * fragment that is not public 402 content. */
+ * Every failure the rest of the suite exercises (legs 1–3 refusals and the rows of the README's
+ * error table, malformed and oversized headers, timeouts, a lost E8 answer, usage extract/send
+ * failures, boot refusals and unreachable boots) runs through the core (`handleRequest`) and
+ * through every adapter over real HTTP, with headers the official x402 clients built over a real
+ * 402, so they carry real signatures. Fake-Lago bodies carry planted markers in every place the
+ * middleware must not surface. Everything an agent, an operator or a log could see is captured:
+ * each response's status, headers (raw and decoded) and body, each `onError` argument
+ * (`message`, `stack`, `JSON.stringify`, `util.inspect`, every own property), each boot
+ * rejection, each usage event body and every `console.*` call. None may contain the API key,
+ * either header's value, the payment's signature or EIP-3009 nonce, the sign-in's signature, a
+ * handler's exception text or a marker; for the key and the cryptographic values not even a
+ * 10-character fragment (V8's `JSON.parse` error quotes 10 characters of its input), and for the
+ * headers no 24-character fragment that is not public 402 content. */
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -1461,7 +1461,7 @@ describe.concurrent.each(DRIVERS)("%s", (driver) => {
       const expected = driver === "core" && s.outcome !== "unreachable" ? [] : [503, 503, 503];
       expect(result.statuses).toStrictEqual(expected);
       expect(result.rejected).toBe(s.outcome !== "unreachable");
-      // R28: a refusal is reported once before rejecting, an invalid config is left to Node, and an
+      // A refusal is reported once before rejecting, an invalid config is left to Node, and an
       // unreachable route is reported on its first check and on every background retry.
       if (s.outcome === "unreachable") {
         expect(result.reports.length).toBeGreaterThanOrEqual(2);

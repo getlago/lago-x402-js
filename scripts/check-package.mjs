@@ -22,7 +22,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCRATCH = join(ROOT, ".package-check");
 const INSTALLED = join(SCRATCH, "node_modules", "lago-x402");
 
-/** Context §4: every subpath and exactly the names it exports at runtime. */
+/** Every subpath and exactly the names it exports at runtime: the public API, so an accidental
+ * export (or a missing one) fails the check. */
 const EXPORTS = {
   "lago-x402": [
     "LagoApiError",

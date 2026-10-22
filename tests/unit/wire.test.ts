@@ -98,7 +98,7 @@ function requirementsOf(...entries: object[]): LagoRequirement[] {
   return gate.requirements;
 }
 
-/** What the gate composes for one 402 (Task 5): E7 challenge → accepts + sign-in → header. */
+/** What the gate composes for one 402: E7 challenge → accepts + sign-in → header. */
 function challenge(o: { origin?: URL; target?: string; statement?: string; requirements?: object[] } = {}) {
   const origin = o.origin ?? ORIGIN;
   const url = resourceUrl(origin, o.target ?? "/v1/generate");
@@ -173,7 +173,7 @@ describe("parseGateCheck", () => {
     ["no requirements key", { gate_check: { external_subscription_id: "x402_sub_1" } }],
     ["empty requirements", gateCheckChallenge({ requirements: [] })],
     ["a non-array requirements", { gate_check: { ...gateCheckChallenge().gate_check, requirements: {} } }],
-    ["a challenge without sign_in_chains (Lago before INT-331)", { gate_check: withoutSignIn }],
+    ["a challenge without sign_in_chains (a Lago without sign-in-with-x)", { gate_check: withoutSignIn }],
     ["a challenge with null sign_in_chains", gateCheckChallenge({ sign_in_chains: null })],
     [
       "a non-string sign-in chain",

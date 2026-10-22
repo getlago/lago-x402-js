@@ -123,9 +123,10 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 const MATCHED_FIELDS = ["scheme", "network", "asset", "amount", "payTo", "maxTimeoutSeconds"] as const;
 
-/** context.md §2.2: a fresh entry matches `accepted` when both have the same key set, equal
- * terms and deep-equal `extra`; on `solana:*` only `extra.feePayer` may differ (CDP rotates it
- * per `/supported` call), and must then be a non-empty string. Nothing is normalised. */
+/** E8 never checks the amount against the route, so a payment is forwarded only when the entry
+ * it paid matches a fresh one: the same key set, equal terms and deep-equal `extra`. On
+ * `solana:*` only `extra.feePayer` may differ (CDP rotates it per `/supported` call), and must
+ * then be a non-empty string. Nothing is normalised. */
 function matches(entry: PaymentRequirements, accepted: Record<string, unknown>): boolean {
   const fresh = entry as unknown as Record<string, unknown>;
   if (!sameKeys(fresh, accepted) || !MATCHED_FIELDS.every((key) => fresh[key] === accepted[key])) {
@@ -297,7 +298,8 @@ export class Gate {
 
   /** E8's body. `payment` is a deep copy with `resource` reset to this route's 402 resource and
    * `extensions.bazaar` set to the route's rendered extension (deleted when the route is not
-   * discoverable, whatever the agent sent); every other key keeps its position and value. `payment_requirements` is `accepted` exactly as the agent sent it. */
+   * discoverable, whatever the agent sent); every other key keeps its position and value.
+   * `payment_requirements` is `accepted` exactly as the agent sent it. */
   #purchaseBody(route: NormalizedRoute, req: GateRequest, payment: PaymentPayload): unknown {
     const forwarded = JSON.parse(JSON.stringify(payment)) as Record<string, unknown>;
     forwarded.resource = this.#resource(route, req);
@@ -334,7 +336,8 @@ export class Gate {
       return second.kind === "done" ? second.outcome : this.#paymentPending(second.cause);
     } catch (err) {
       // E8 was called, so money may have moved: any throw from here on (a failing billing
-      // factory after `settled`, say) asks the agent to come back, never `unavailable` (R17).
+      // factory after `settled`, say) asks the agent to come back, never `unavailable`, which
+      // would read as "nothing happened" to an agent whose payment may have settled.
       return this.#paymentPending(reportable(err));
     }
   }

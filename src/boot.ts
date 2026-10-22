@@ -1,6 +1,7 @@
 /** Boot checks: before a route serves, Lago must confirm it can bill it. Two reads per route:
  * the billable metric (it must sum the `value` property the usage event sends), then leg 1's
- * E7, which must answer a challenge an agent can sign in to (lago-api with INT-331).
+ * E7, which must answer a challenge an agent can sign in to (a lago-api with sign-in-with-x on
+ * gate checks: without it, every agent would pay on every call).
  *
  * A route is `checking` until its first check ends, then `active`, `refused` (for good) or
  * `unreachable` (retried in the background, 1 s doubling to 60 s, on unref'd timers). Reasons
@@ -27,9 +28,10 @@ export interface Refusal {
 
 type Report = (err: Error, where: LagoX402ErrorWhere) => void;
 
-/** Lago codes and error names a reason may quote (context §3). */
+/** Lago codes and error names a reason may quote: identifier-shaped only, so a reason never
+ * carries Lago's free text. */
 const SAFE_CODE = /^[A-Za-z0-9_.]{1,64}$/;
-const NO_SIGN_IN = "this Lago does not support sign-in-with-x; it needs lago-api with INT-331";
+const NO_SIGN_IN = "this Lago does not support sign-in-with-x on gate checks";
 const UNEXPECTED_E7 = "Lago's gate_checks answer has an unexpected shape";
 
 const OK: CheckResult = { ok: true };
@@ -108,8 +110,9 @@ async function checkMetric(
   return OK;
 }
 
-/** A challenge (a `requirements` array) without a `sign_in_chains` array: what lago-api answers
- * before INT-331 (ruling R23). Any other unreadable E7 is not fixed by upgrading lago-api. */
+/** A challenge (a `requirements` array) without a `sign_in_chains` array: what a lago-api
+ * without sign-in-with-x on gate checks answers, so the refusal tells the merchant to upgrade.
+ * Any other unreadable E7 is not fixed by upgrading lago-api, and gets its own reason. */
 function lacksSignIn(body: unknown): boolean {
   const answer = isPlainObject(body) ? body.gate_check : undefined;
   return isPlainObject(answer) && Array.isArray(answer.requirements) && !Array.isArray(answer.sign_in_chains);

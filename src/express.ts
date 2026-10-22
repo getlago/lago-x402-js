@@ -93,7 +93,8 @@ function serve(res: Response, outcome: Serve): void {
 
 /** Wraps `res.writeHead`, which Node also calls for an implicit header write (`res.write`,
  * `res.end`, `res.send`, `flushHeaders`), so `private` is merged into the `Cache-Control` that
- * actually goes out, never overwriting the handler's directives (R4, R26). Headers passed to
+ * actually goes out, never overwriting the handler's directives: a shared cache must never
+ * replay a gated response, and the handler's own caching rules still hold. Headers passed to
  * `writeHead` itself are applied first, exactly as Node applies them once any header was set. */
 function keepPrivate(res: ServerResponse): void {
   const writeHead = res.writeHead;

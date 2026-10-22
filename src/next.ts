@@ -91,9 +91,10 @@ function handlerAnswer(answer: unknown): { response: Response; readUsage: () => 
 }
 
 /** Bills through Next's `after()`, which runs the task once the response has gone out and keeps
- * the delivery alive past the request (R30). Should `after()` throw (called outside a request
- * scope), the call is billed at once, never awaited: nothing may throw once the handler has run,
- * since on a paid call the money has already moved. */
+ * the delivery alive past the request, so the response never waits for the event and the event
+ * is not dropped when the request ends. Should `after()` throw (called outside a request scope),
+ * the call is billed at once, never awaited: nothing may throw once the handler has run, since
+ * on a paid call the money has already moved. */
 function billAfter(billing: CallBilling, status: number, readUsage: () => unknown): void {
   const task = (): Promise<void> => bill(billing, () => status, readUsage);
   try {

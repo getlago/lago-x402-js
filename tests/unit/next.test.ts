@@ -3,8 +3,8 @@
  * handler that throws or returns no response, responses whose headers are immutable (`fetch()`,
  * `Response.redirect()`) or that have no body, and request translation. The wrapped handler is
  * called directly, as Next calls a route handler, with `after()` mocked as Next runs it on Node.
- * The three legs and every §3 row run on Next in behaviour.test.ts; tests/integration/next.test.ts
- * runs the adapter in a real `next build && next start`. */
+ * The three legs and every row of the README's error table run on Next in behaviour.test.ts;
+ * tests/integration/next.test.ts runs the adapter in a real `next build && next start`. */
 import { randomUUID } from "node:crypto";
 import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from "@x402/core/http";
 import { after, NextResponse } from "next/server.js";

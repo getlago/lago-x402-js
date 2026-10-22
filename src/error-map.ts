@@ -141,7 +141,8 @@ export function mapGateCheckRefusal(answer: LagoAnswer): Decision {
 export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): Decision {
   const report = (): Error => new LagoApiError("credit_purchases", answer.status, answer.body);
 
-  // Any 5xx may hide a settled payment (ruling R11): retry once, then ask the agent to wait.
+  // Any 5xx may hide a settled payment (Lago, or a proxy in front of it, may have failed after
+  // the facilitator settled): retry once, then ask the agent to wait.
   if (answer.status >= 500) {
     return attempt === 1 ? { kind: "retry", why: "lost" } : pending(report());
   }
@@ -158,7 +159,7 @@ export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): De
     }
     // Attempt 2 only follows credit_grant_failed (money moved), a lost answer or a 5xx (money may
     // have moved): the first attempt may have spent the authorization the retry presents again,
-    // so a payment refusal now is never a 402 (ruling R16).
+    // so a payment refusal now is never a 402, which would have the agent pay a second time.
     if (attempt === 2) return pending(report());
     // payment first, then payment_requirements: the first sanitized code on either.
     const first = errorCodes.payment?.[0] ?? errorCodes.payment_requirements?.[0];

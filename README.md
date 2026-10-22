@@ -48,7 +48,7 @@ Requires Node `^20.19` or `>=22.12`, plus one of `express` (4.21+ or 5), `hono` 
 
 ## Before you start: set up Lago
 
-1. **A lago-api with sign-in-with-x on gate checks** (INT-331). At the time of writing (October 2026) it lives on lago-api's `feat/x402/gate-check-sign-in` branch; `main` still takes an unproven `agent_address` and ignores the sign-in. `createLagoX402` refuses at boot a Lago whose challenge has no `sign_in_chains`, with the message _"this Lago does not support sign-in-with-x; it needs lago-api with INT-331"_.
+1. **A lago-api with sign-in-with-x on gate checks.** At the time of writing (October 2026) it lives on lago-api's `feat/x402/gate-check-sign-in` branch; `main` still takes an unproven `agent_address` and ignores the sign-in. `createLagoX402` refuses at boot a Lago whose challenge has no `sign_in_chains`, with the reason _"this Lago does not support sign-in-with-x on gate checks"_.
 2. **A premium license**, with the organization's `x402_payments` feature flag and the `events_targeting_wallets` premium integration. Without wallet targeting, gate checks answer `charge_not_targeted`.
 3. **An x402 connection.** Its `code` is your `connectionCode`. It needs:
    - a CDP (Coinbase Developer Platform) API key;

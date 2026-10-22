@@ -19,7 +19,8 @@ export interface EvmAgent {
   siwx: ClientExtension;
 }
 
-/** A stock EVM agent (references.md recipe). `signIn: false` builds one without the SIWx
+/** A stock EVM agent, set up as the x402 client docs show (`x402Client` with `ExactEvmScheme`
+ * and the sign-in-with-x client extension). `signIn: false` builds one without the SIWx
  * extension. The stock client refuses any default-asset (USDC) payment above
  * `DEFAULT_MAX_AMOUNT_PER_PAYMENT` ("$1" in @x402/core 2.28.0) unless the agent raises its
  * `spendControls`; pass `maxAmountPerPayment` to model an agent that did. */

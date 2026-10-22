@@ -28,7 +28,7 @@ import {
   validationErrors,
 } from "../support/fixtures.js";
 
-/** Compile-time check that §4's public types are exported from the entry point. */
+/** Compile-time check that the public types are exported from the entry point. */
 export type PublicTypes = [
   PublicLagoX402,
   PublicConfig,
@@ -44,7 +44,7 @@ const apiKey = "test-key-" + randomUUID();
 const E7_BODY =
   '{"gate_check":{"connection_code":"conn_test","plan_code":"agents_plan","billable_metric_code":"tokens",' +
   '"wallet_code":"agents_wallet","amount_cents":500,"estimated_call_cost_cents":2}}';
-const NO_SIGN_IN = "this Lago does not support sign-in-with-x; it needs lago-api with INT-331";
+const NO_SIGN_IN = "this Lago does not support sign-in-with-x on gate checks";
 const UNEXPECTED_E7 = "Lago's gate_checks answer has an unexpected shape";
 /** Background retries in tests: 10 ms, 20 ms, 40 ms, … */
 const FAST = { bootRetryBaseMs: 10 };
@@ -247,8 +247,9 @@ describe("checkRoute", () => {
     expect(await check()).toStrictEqual({ ok: false, definitive: true, reason });
   });
 
-  // R23: only a challenge (requirements array) without a sign_in_chains array is a Lago without
-  // INT-331; any other unreadable answer is not something upgrading lago-api would fix.
+  // Only a challenge (requirements array) without a sign_in_chains array is a Lago without
+  // sign-in-with-x on gate checks; any other unreadable answer is not something upgrading
+  // lago-api would fix.
   const challengeWithout = (chains: "absent" | null) => {
     const body = gateCheckChallenge();
     if (chains === "absent") delete (body.gate_check as Partial<typeof body.gate_check>).sign_in_chains;
@@ -447,7 +448,7 @@ describe("createLagoX402: refusals at boot", () => {
     expect(err.reason).toBe(reason);
   });
 
-  it("a challenge without sign_in_chains (Lago without INT-331) is refused", async () => {
+  it("a challenge without sign_in_chains (a Lago without sign-in-with-x on gate checks) is refused", async () => {
     const body = gateCheckChallenge();
     delete (body.gate_check as Partial<typeof body.gate_check>).sign_in_chains;
     answers("gate_checks", { status: 200, body });
@@ -768,7 +769,7 @@ describe("reporting", () => {
   });
 
   it("a refused boot is reported once (boot), with the error it rejects with, before rejecting", async () => {
-    // R28: an adapter awaiting the promise per request handles the rejection, so Node raises no
+    // An adapter awaiting the promise per request handles the rejection, so Node raises no
     // unhandled rejection; this report is then the only trace of the refusal.
     const marker = "body-marker-" + randomUUID();
     answers("gate_checks", {

@@ -262,7 +262,7 @@ async function main() {
   const gate = check.body?.gate_check ?? {};
   if (!Array.isArray(gate.requirements) || !Array.isArray(gate.sign_in_chains)) {
     throw new SetupFailed(
-      "gate check: no challenge with sign-in chains (does this Lago run INT-331, feat/x402/gate-check-sign-in?)",
+      "gate check: no challenge with sign-in chains (does this Lago support sign-in-with-x on gate checks? lago-api branch feat/x402/gate-check-sign-in)",
     );
   }
   const offMainnet = gate.requirements.every(

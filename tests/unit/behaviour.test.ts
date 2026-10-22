@@ -347,7 +347,7 @@ describe.each(FRAMEWORKS)("%s", (fw) => {
     });
   });
 
-  describe("one request per §3 row", () => {
+  describe("one request per row of the error table", () => {
     it("E7 pass on leg 1 → 503 unavailable, gate.check", async () => {
       const { url, settle } = await start({ usage: 1 });
       lago.on("gate_checks", () => ({ status: 200, body: gateCheckPass() }));

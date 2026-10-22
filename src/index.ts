@@ -1,4 +1,5 @@
-/** The package's core API (context §4): nothing else is exported from "lago-x402". */
+/** The package's core API: nothing else is exported from "lago-x402", so whatever is not listed
+ * here can change without breaking anyone. */
 import type { LagoX402Config } from "./config.js";
 import { createLagoX402 as create, type LagoX402 } from "./x402.js";
 

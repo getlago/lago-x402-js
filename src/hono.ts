@@ -13,10 +13,14 @@
  * as soon as the middleware has the final `c.res`, a fallback that cannot see a client going
  * away or a later middleware changing the status.
  *
- * Served responses get `private` merged into whatever `Cache-Control` the handler sends. The
- * gate's own answers are `Response`s and never reach the handler. Nothing here throws into Hono:
- * an unexpected failure answers 503 `unavailable` and never serves. Only Hono's types are
- * imported; the package never loads `hono` at runtime. */
+ * Served responses get `private` merged into whatever `Cache-Control` the handler sends; one
+ * that cannot carry it (no HTTP status, as `Response.error()`) is replaced by 503 `unavailable`,
+ * or `payment_pending` after a payment. The gate's own answers are `Response`s and never reach
+ * the handler. The gate itself never throws into Hono: an unexpected failure of its own answers
+ * 503 `unavailable` and never serves. What the handler throws is Hono's to answer, as it would
+ * be without the gate: Hono turns an `Error` into its 500, and a thrown non-`Error` rejects out
+ * of this middleware too. Only Hono's types are imported; the package never loads `hono` at
+ * runtime. */
 import type { Context, MiddlewareHandler, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {

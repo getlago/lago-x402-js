@@ -2,7 +2,8 @@
  * targets as `@hono/node-server` and Hono's router dispatch them, billing on the Node response
  * (and the fallback without Node bindings, `app.request()`), responses whose headers are
  * immutable (`fetch()`), `Cache-Control` however the handler builds its response, and handler
- * failures. The three legs and every §3 row run on Hono in behaviour.test.ts. */
+ * failures. The three legs and every row of the README's error table run on Hono in
+ * behaviour.test.ts. */
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
 import type { HttpBindings } from "@hono/node-server";
@@ -254,7 +255,7 @@ describe("hono", () => {
 
     it("a request in flight while boot refuses answers 503, and the refusal is reported though the app never awaited it", async () => {
       // The request's `await` is the only handler on the boot promise, attached before the
-      // rejection, so Node raises no unhandled rejection: the report is the only trace (R28).
+      // rejection, so Node raises no unhandled rejection: the report is the only trace.
       const inFlight = deferred<void>();
       lago.on("billable_metrics", async () => {
         await inFlight.promise;

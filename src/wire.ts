@@ -135,8 +135,8 @@ function parseRequirement(entry: unknown): LagoRequirement | null {
 }
 
 /** Pass = `requirements: null` with a subscription; challenge = a non-empty, well-formed
- * `requirements` array plus `sign_in_chains` (absent on Lago without INT-331). Anything else
- * throws `LagoApiError` `unexpected_answer`. */
+ * `requirements` array plus `sign_in_chains` (absent on a Lago without sign-in-with-x on gate
+ * checks). Anything else throws `LagoApiError` `unexpected_answer`. */
 export function parseGateCheck(body: unknown): GateCheck {
   const answer = isPlainObject(body) ? body.gate_check : undefined;
   if (!isPlainObject(answer)) throw unexpectedAnswer("gate_checks");

@@ -2,7 +2,7 @@
  * the promise form, raw-socket request targets upstream's middleware was bypassed with, billing
  * when the client goes away, `Cache-Control` whatever way the handler writes its headers, and
  * never letting a throw reach Express (Express 4 does not catch a rejected middleware). The three
- * legs and every §3 row run on both majors in behaviour.test.ts. */
+ * legs and every row of the README's error table run on both majors in behaviour.test.ts. */
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
 import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from "@x402/core/http";
@@ -190,7 +190,7 @@ describe.each(["express", "express4"] as const)("%s", (fw) => {
 
     it("a request in flight while boot refuses answers 503, and the refusal is reported though the app never awaited it", async () => {
       // The request's `await` is the only handler on the boot promise, attached before the
-      // rejection, so Node raises no unhandled rejection: the report is the only trace (R28).
+      // rejection, so Node raises no unhandled rejection: the report is the only trace.
       const inFlight = deferred<void>();
       lago.on("billable_metrics", async () => {
         await inFlight.promise;

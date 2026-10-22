@@ -1,7 +1,6 @@
-/** What every framework adapter shares, so the attach-time route check (R7), the promise form
- * (R27, R28), fail-closed decisions, billing that never breaks a response, and the `private`
- * merge (R4, R26) cannot drift between them. Internal: neither the package entry point nor any
- * subpath exports it. */
+/** What every framework adapter shares, so the attach-time route check, the promise form,
+ * fail-closed decisions, billing that never breaks a response, and the `private` merge cannot
+ * drift between them. Internal: neither the package entry point nor any subpath exports it. */
 import { withPrivateCacheControl } from "@x402/core/http";
 import { ROUTE_NAME } from "./config.js";
 import { LagoX402ConfigError } from "./errors.js";
@@ -24,8 +23,9 @@ function isPromiseLike(value: unknown): value is PromiseLike<LagoX402> {
   );
 }
 
-/** Given an instance, an unknown route name throws `LagoX402ConfigError` now (R7); given a
- * promise, each request checks it instead. `attacher` names the adapter's function in the
+/** Given an instance, an unknown route name throws `LagoX402ConfigError` now, so a typo fails at
+ * startup rather than on every request; given a promise, each request checks it instead (there
+ * is no instance to check against yet). `attacher` names the adapter's function in the
  * message for a name that could never be a route (it fails the config's pattern, so it stays
  * out of the message). */
 export function checkRoute(x402: X402Source, route: string, attacher: string): void {
@@ -49,7 +49,7 @@ async function instanceOf(x402: X402Source): Promise<LagoX402 | null> {
 /** The gate's outcome for one request; `request` is translated only once an instance is in
  * hand. Never rejects: anything unexpected is 503 `unavailable`, and so is a rejected promise,
  * with no report (there is no instance to report through; `createLagoX402` reported a boot
- * refusal itself, and the app's own await of it surfaces the error) (R27, R28). */
+ * refusal itself, and the app's own await of it surfaces the error). */
 export async function decide(
   x402: X402Source,
   route: string,
@@ -77,7 +77,8 @@ export function bill(billing: CallBilling, status: () => number, readUsage: () =
 }
 
 /** `private` merged into a `Cache-Control` value however a framework holds it, never
- * overwriting the handler's directives (R4, R26). */
+ * overwriting the handler's directives: a shared cache must never replay a gated response, and
+ * the handler's own caching rules still hold. */
 export function privateCacheControl(current: string | number | readonly string[] | null | undefined): string {
   const value =
     current === undefined || current === null

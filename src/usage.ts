@@ -15,7 +15,7 @@ export interface UsageEvent {
   externalSubscriptionId: string;
   /** The billable metric code. */
   code: string;
-  /** Integer seconds. */
+  /** Epoch seconds with up to 3 decimals, never floored (Lago drops events older than a subscription's started_at). */
   timestamp: number;
   /** Decimal string. */
   value: string;
@@ -181,7 +181,7 @@ function usageError(reason: LagoX402UsageError["reason"]): LagoX402UsageError {
   return new LagoX402UsageError(reason);
 }
 
-/** Fixes `transaction_id` and `timestamp` now (serve time), so every retry carries both. */
+/** Fixes `transaction_id` and `timestamp` (millisecond precision) now (serve time), so every retry carries both. */
 export function createCallBilling(
   route: NormalizedRoute,
   externalSubscriptionId: string,
@@ -189,7 +189,7 @@ export function createCallBilling(
   report: ReportFn,
 ): CallBilling {
   const transactionId = randomUUID();
-  const timestamp = Math.floor(Date.now() / 1000);
+  const timestamp = Date.now() / 1000;
   let first: Promise<void> | undefined;
 
   const run = async (status: number, readUsage: () => unknown): Promise<void> => {

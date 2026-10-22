@@ -56,7 +56,7 @@ async function bill(status: number, usage: () => unknown, s = sender()) {
 
 describe("createCallBilling", () => {
   it("sends one event after the response with the exact wire shape", async () => {
-    const before = Math.floor(Date.now() / 1000);
+    const before = Date.now() / 1000 - 1;
     await bill(200, () => 42);
     expect(lago.requests).toHaveLength(1);
     const req = lago.requests[0];
@@ -77,7 +77,7 @@ describe("createCallBilling", () => {
       properties: { value: "42", target_wallet_code: "agents_wallet" },
     });
     expect(parsed.event.transaction_id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(Number.isInteger(parsed.event.timestamp)).toBe(true);
+    expect(typeof parsed.event.timestamp).toBe("number");
     expect(parsed.event.timestamp as number).toBeGreaterThanOrEqual(before);
     expect(Object.keys((parsed.event as { properties: object }).properties)).toEqual([
       "value",
@@ -167,10 +167,22 @@ describe("createCallBilling", () => {
       expect(sent).toHaveLength(1);
       const { event } = sent[0] as { event: { transaction_id: string; timestamp: number } };
       expect(event.transaction_id).toBe(drawn[0]);
-      expect(event.timestamp).toBe(Date.parse("2026-10-21T12:00:00Z") / 1000);
+      expect(event.timestamp).toBe(Date.parse("2026-10-21T12:00:00.900Z") / 1000);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("the timestamp keeps millisecond precision", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_761_129_826_774);
+      await bill(200, () => 1);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(lago.requests[0].rawBody).toContain('"timestamp":1761129826.774,');
+    expect((lago.requests[0].json as { event: { timestamp: unknown } }).event.timestamp).toBe(1761129826.774);
   });
 
   it("never throws into the caller when onError throws", async () => {

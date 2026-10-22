@@ -45,3 +45,28 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+  next:
+    # lago-x402/next in a real Next.js app: `next build && next start` against the fake Lago.
+    name: next · ubuntu-latest · node22
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Next.js integration
+        run: npm run test:next

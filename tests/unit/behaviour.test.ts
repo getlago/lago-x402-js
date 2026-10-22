@@ -1,6 +1,7 @@
 /** The behaviour every adapter must show, through real HTTP and the official x402 clients
  * (`@x402/fetch` + the sign-in-with-x client extension), against the fake Lago. Each framework in
- * `FRAMEWORKS` runs the whole suite. Events are asserted only after `settle()`: the app is
+ * `FRAMEWORKS` runs the whole suite (Next through `nextListener`, with `after()` mocked as Next
+ * runs it). Events are asserted only after `settle()`: the app is
  * closed (every response has finished, so billing has run) and the instance drained, so no
  * assertion waits on a timer. */
 import { randomUUID } from "node:crypto";
@@ -30,6 +31,9 @@ import {
   startApp,
   type Handler,
 } from "../support/frameworks.js";
+
+// Next's `after()` as on a Node server, scoped to each request the bridge serves.
+vi.mock("next/server.js", async () => (await import("../support/frameworks.js")).nextServer);
 
 const apiKey = "test-key-" + randomUUID();
 const SIGN_IN_WITH_X = "sign-in-with-x";

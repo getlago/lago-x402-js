@@ -22,6 +22,11 @@
       "types": "./dist/hono.d.ts",
       "import": "./dist/hono.js",
       "default": "./dist/hono.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js",
+      "default": "./dist/next.js"
     }
   },
   "files": [
@@ -53,6 +58,7 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:next": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
@@ -64,13 +70,17 @@
   },
   "peerDependencies": {
     "express": "^4.21.0 || ^5.0.0",
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "next": "^16.0.0"
   },
   "peerDependenciesMeta": {
     "express": {
       "optional": true
     },
     "hono": {
+      "optional": true
+    },
+    "next": {
       "optional": true
     }
   },
@@ -79,6 +89,7 @@
     "@hono/node-server": "^2.1.5",
     "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
+    "@types/react": "^19.3.0",
     "@x402/evm": "^2.28.0",
     "@x402/extensions": "^2.28.0",
     "@x402/fetch": "^2.28.0",
@@ -86,7 +97,10 @@
     "express": "^5.2.1",
     "express4": "npm:express@^4",
     "hono": "^4.13.13",
+    "next": "^16.4.1",
     "prettier": "^3.8.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.59.2",

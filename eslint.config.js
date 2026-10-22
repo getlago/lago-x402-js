@@ -3,7 +3,15 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", "*.config.js", "*.config.ts"],
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "*.config.js",
+      "*.config.ts",
+      // What `next build` writes into the Next fixture.
+      "tests/integration/next-app/.next/**",
+      "tests/integration/next-app/next-env.d.ts",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

@@ -12,6 +12,10 @@ dist/
 .turbo/
 .eslintcache
 
+# What `next build` writes into the Next.js integration fixture
+tests/integration/next-app/.next/
+tests/integration/next-app/next-env.d.ts
+
 # npm pack artifacts (created locally when verifying a tarball before publish)
 *.tgz
 

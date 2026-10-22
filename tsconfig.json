@@ -14,7 +14,7 @@
     "isolatedModules": true,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*", "tests/**/*", "vitest.config.ts", "vitest.integration.config.ts"],
+  "include": ["src/**/*", "tests/**/*", "vitest.config.ts", "vitest.integration.config.ts", "vitest.live.config.ts"],
   // The Next fixture is type-checked by `next build`, with its own tsconfig.
   "exclude": ["node_modules", "dist", "tests/integration/next-app"]
 }

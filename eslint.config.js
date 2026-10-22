@@ -22,6 +22,20 @@ export default tseslint.config(
     },
   },
   {
+    // Node scripts (package check, live setup): plain ESM run by Node.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        AbortSignal: "readonly",
+        Buffer: "readonly",
+        URL: "readonly",
+        console: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+      },
+    },
+  },
+  {
     // Tests can be looser
     files: ["tests/**/*.ts"],
     rules: {

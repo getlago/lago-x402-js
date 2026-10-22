@@ -18,6 +18,8 @@ tests/integration/next-app/next-env.d.ts
 
 # npm pack artifacts (created locally when verifying a tarball before publish)
 *.tgz
+# `npm run test:package` unpacks the tarball here (removed when it finishes)
+.package-check/
 
 # Editor / OS
 .DS_Store

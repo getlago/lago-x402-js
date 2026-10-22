@@ -59,11 +59,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:next": "vitest run --config vitest.integration.config.ts",
+    "test:package": "node scripts/check-package.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "lint": "eslint src tests",
-    "lint:fix": "eslint src tests --fix",
-    "format": "prettier --write src tests",
-    "format:check": "prettier --check src tests"
+    "lint": "eslint src tests scripts",
+    "lint:fix": "eslint src tests scripts --fix",
+    "format": "prettier --write src tests scripts",
+    "format:check": "prettier --check src tests scripts"
   },
   "dependencies": {
     "@x402/core": "^2.28.0"

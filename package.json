@@ -17,6 +17,11 @@
       "types": "./dist/express.d.ts",
       "import": "./dist/express.js",
       "default": "./dist/express.js"
+    },
+    "./hono": {
+      "types": "./dist/hono.d.ts",
+      "import": "./dist/hono.js",
+      "default": "./dist/hono.js"
     }
   },
   "files": [
@@ -58,15 +63,20 @@
     "@x402/core": "^2.28.0"
   },
   "peerDependencies": {
-    "express": "^4.21.0 || ^5.0.0"
+    "express": "^4.21.0 || ^5.0.0",
+    "hono": "^4.6.0"
   },
   "peerDependenciesMeta": {
     "express": {
+      "optional": true
+    },
+    "hono": {
       "optional": true
     }
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@hono/node-server": "^2.1.5",
     "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "@x402/evm": "^2.28.0",
@@ -75,6 +85,7 @@
     "eslint": "^10.3.0",
     "express": "^5.2.1",
     "express4": "npm:express@^4",
+    "hono": "^4.13.13",
     "prettier": "^3.8.3",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.5.0",

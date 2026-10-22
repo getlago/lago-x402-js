@@ -20,6 +20,7 @@ import {
   HANDLER_BODY,
   PATH,
   ROUTE,
+  rawExchange,
   serve,
   startApp,
   type App,
@@ -48,50 +49,6 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
   return { promise, resolve };
-}
-
-interface RawReply {
-  status: number;
-  headers: Record<string, string>;
-  body: string;
-}
-
-function parseReply(data: string): RawReply {
-  const end = data.indexOf("\r\n\r\n");
-  const [statusLine, ...lines] = data.slice(0, end).split("\r\n");
-  const headers: Record<string, string> = {};
-  for (const line of lines) {
-    const colon = line.indexOf(":");
-    const name = line.slice(0, colon).trim().toLowerCase();
-    const value = line.slice(colon + 1).trim();
-    headers[name] = name in headers ? `${headers[name]}, ${value}` : value;
-  }
-  let body = data.slice(end + 4);
-  if (headers["transfer-encoding"] === "chunked") {
-    let out = "";
-    for (let at = 0; ;) {
-      const lineEnd = body.indexOf("\r\n", at);
-      const size = parseInt(body.slice(at, lineEnd), 16);
-      if (!size) break;
-      out += body.slice(lineEnd + 2, lineEnd + 2 + size);
-      at = lineEnd + 2 + size + 2;
-    }
-    body = out;
-  }
-  return { status: Number(statusLine.split(" ")[1]), headers, body };
-}
-
-/** Sends `request` verbatim over a raw socket: no client normalises the target. */
-function rawExchange(port: number, request: string): Promise<RawReply> {
-  return new Promise((resolve, reject) => {
-    const socket = connect(port, "127.0.0.1");
-    let data = "";
-    socket.setEncoding("latin1");
-    socket.on("data", (chunk: string) => (data += chunk));
-    socket.on("error", reject);
-    socket.on("end", () => resolve(parseReply(data)));
-    socket.write(request);
-  });
 }
 
 describe.each(["express", "express4"] as const)("%s", (fw) => {

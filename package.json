@@ -12,6 +12,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./express": {
+      "types": "./dist/express.d.ts",
+      "import": "./dist/express.js",
+      "default": "./dist/express.js"
     }
   },
   "files": [
@@ -52,13 +57,24 @@
   "dependencies": {
     "@x402/core": "^2.28.0"
   },
+  "peerDependencies": {
+    "express": "^4.21.0 || ^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "@x402/evm": "^2.28.0",
     "@x402/extensions": "^2.28.0",
     "@x402/fetch": "^2.28.0",
     "eslint": "^10.3.0",
+    "express": "^5.2.1",
+    "express4": "npm:express@^4",
     "prettier": "^3.8.3",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.5.0",

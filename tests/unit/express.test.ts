@@ -4,6 +4,7 @@
  * never letting a throw reach Express (Express 4 does not catch a rejected middleware). The three
  * legs and every row of the README's error table run on both majors in behaviour.test.ts. */
 import { randomUUID } from "node:crypto";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import { connect } from "node:net";
 import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from "@x402/core/http";
 import type { Express, NextFunction, Request, Response } from "express";
@@ -359,6 +360,64 @@ describe.each(["express", "express4"] as const)("%s", (fw) => {
       socket.destroy();
 
       expect(await settle()).toStrictEqual([]);
+      expect(reports).toStrictEqual([]);
+    });
+  });
+
+  describe("billing after the response", () => {
+    it("the event goes out once the response has finished, never when its headers do", async () => {
+      const order: string[] = [];
+      lago.on("gate_checks", passOnSignIn);
+      lago.on("events", () => {
+        order.push("event");
+        return { status: 200, body: {} };
+      });
+      const release = deferred<void>();
+      const { app, settle } = await bespoke((express, x402) => {
+        express.post("/slow", lagoX402(x402, ROUTE), (_req: Request, res: Response) => {
+          res.locals.lagoUsage = 7;
+          res.on("finish", () => void order.push("finish"));
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.write("first");
+          void release.promise.then(() => res.end("last"));
+        });
+      });
+
+      const response = await new Promise<IncomingMessage>((resolve, reject) => {
+        const req = httpRequest({
+          host: "127.0.0.1",
+          port: app.port,
+          method: "POST",
+          path: "/slow",
+          headers: { "SIGN-IN-WITH-X": SIGN_IN, "Content-Length": 0 },
+        });
+        req.on("response", resolve);
+        req.on("error", reject);
+        req.end();
+      });
+      let body = "";
+      const firstChunk = deferred<void>();
+      const ended = new Promise<void>((resolve) => response.on("end", resolve));
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => {
+        body += chunk;
+        firstChunk.resolve();
+      });
+      await firstChunk.promise;
+
+      // The headers and the first chunk are out, the response has not finished: nothing is billed yet.
+      expect(response.statusCode).toBe(200);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(events()).toHaveLength(0);
+      expect(order).toStrictEqual([]);
+
+      release.resolve();
+      await ended;
+      expect(body).toBe("firstlast");
+      const billed = await settle();
+      expect(order).toStrictEqual(["finish", "event"]);
+      expect(billed).toHaveLength(1);
+      expect(billed[0]).toMatchObject({ external_subscription_id: SUBSCRIPTION, properties: { value: "7" } });
       expect(reports).toStrictEqual([]);
     });
   });

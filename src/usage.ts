@@ -202,15 +202,19 @@ function reportedUsage(readUsage: () => unknown, fallback: number, report: Repor
   return reported;
 }
 
-/** Fixes `transaction_id` and `timestamp` (millisecond precision) now (serve time), so every retry carries both. */
+/** Fixes `transaction_id` and `timestamp` (millisecond precision) now (serve time), so every retry
+ * carries both. The timestamp is never before `notBeforeMs`, the start of the subscription a paid
+ * call bills: Lago counts events from that start, and this server's clock may lag Lago's. */
 export function createCallBilling(
   route: NormalizedRoute,
   externalSubscriptionId: string,
   sender: EventSender,
   report: ReportFn,
+  notBeforeMs: number | null = null,
+  now: () => number = Date.now,
 ): CallBilling {
   const transactionId = randomUUID();
-  const timestamp = Date.now() / 1000;
+  const timestamp = Math.max(now(), notBeforeMs ?? -Infinity) / 1000;
   let first: Promise<void> | undefined;
 
   const run = async (status: number, readUsage: () => unknown): Promise<void> => {

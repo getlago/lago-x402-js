@@ -44,6 +44,8 @@ export interface Settlement {
   transactionHash: string | null;
   payerAddress: string;
   externalSubscriptionId: string | null;
+  /** When Lago started that subscription, in epoch milliseconds. */
+  subscriptionStartedAt: number | null;
   reconcileAfter: string | null;
 }
 
@@ -100,6 +102,12 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isStringOrNull(value: unknown): value is string | null {
   return value === null || typeof value === "string";
+}
+
+function epochMsOrNull(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function withoutUndefined<T extends object>(value: T): T {
@@ -167,7 +175,9 @@ export function parseGateCheck(body: unknown): GateCheck {
 }
 
 /** A `settled` answer must name its transaction and subscription; `pending` may not. Anything
- * else throws `LagoApiError` `unexpected_answer`. */
+ * else throws `LagoApiError` `unexpected_answer`, except `subscription_started_at`: absent (an
+ * older Lago) or unreadable, it is null and the paid call is stamped at serve time, rather than
+ * refused after its payment moved. */
 export function parseSettlement(body: unknown): Settlement {
   const answer = isPlainObject(body) ? body.x402_settlement : undefined;
   if (isPlainObject(answer)) {
@@ -178,6 +188,7 @@ export function parseSettlement(body: unknown): Settlement {
       transaction_hash: transactionHash,
       payer_address: payerAddress,
       external_subscription_id: externalSubscriptionId,
+      subscription_started_at: subscriptionStartedAt,
       reconcile_after: reconcileAfter,
     } = answer;
     const wellFormed =
@@ -200,6 +211,7 @@ export function parseSettlement(body: unknown): Settlement {
         transactionHash,
         payerAddress,
         externalSubscriptionId,
+        subscriptionStartedAt: epochMsOrNull(subscriptionStartedAt),
         reconcileAfter,
       };
     }

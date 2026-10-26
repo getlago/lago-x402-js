@@ -212,6 +212,7 @@ describe("parseSettlement", () => {
       transactionHash: settled.transaction_hash,
       payerAddress: settled.payer_address,
       externalSubscriptionId: settled.external_subscription_id,
+      subscriptionStartedAt: Date.parse(settled.subscription_started_at!),
       reconcileAfter: null,
     });
 
@@ -227,8 +228,23 @@ describe("parseSettlement", () => {
       transactionHash: null,
       payerAddress: pending.payer_address,
       externalSubscriptionId: null,
+      subscriptionStartedAt: null,
       reconcileAfter: pending.reconcile_after,
     });
+  });
+
+  it("reads subscription_started_at as epoch milliseconds", () => {
+    const body = settlement({ subscription_started_at: "2026-10-21T12:00:00.315Z" });
+    expect(parseSettlement(body).subscriptionStartedAt).toBe(1_792_584_000_315);
+  });
+
+  it.each<[string, unknown]>([
+    ["an absent", undefined],
+    ["an unreadable", "yesterday"],
+    ["a numeric", 1_792_584_000_315],
+  ])("reads %s subscription_started_at as null rather than refusing a paid call", (_name, value) => {
+    const body = settlement({ subscription_started_at: value as never });
+    expect(parseSettlement(body).subscriptionStartedAt).toBeNull();
   });
 
   it.each<[string, unknown]>([

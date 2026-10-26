@@ -198,6 +198,16 @@ describe("createCallBilling", () => {
     expect((lago.requests[0].json as { event: { timestamp: unknown } }).event.timestamp).toBe(1761129826.774);
   });
 
+  it.each<[string, number | null, number]>([
+    ["the subscription start when the clock is behind it", 1_761_129_827_000, 1761129827],
+    ["the serve time when it is after the subscription start", 1_761_129_826_500, 1761129826.8],
+    ["the serve time without a subscription start", null, 1761129826.8],
+  ])("stamps %s", async (_name, notBeforeMs, timestamp) => {
+    const billing = createCallBilling(route, "sub_1", sender(), report, notBeforeMs, () => 1_761_129_826_800);
+    await billing.finish(200, () => 1);
+    expect((lago.requests[0].json as { event: { timestamp: unknown } }).event.timestamp).toBe(timestamp);
+  });
+
   it("never throws into the caller when onError throws", async () => {
     const throwing = (): void => {
       throw new Error("boom");

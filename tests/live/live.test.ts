@@ -4,18 +4,23 @@
  * and X402_BUYER_EVM_PRIVATE_KEY (a funded Base Sepolia buyer) are set. Optional, with the
  * defaults scripts/live-setup.mjs creates: LAGO_X402_CONNECTION_CODE, LIVE_PLAN_CODE,
  * LIVE_METRIC_CODE, LIVE_WALLET_CODE, LIVE_ORIGIN (http://localhost:4021), LIVE_TOP_UP_CENTS (3),
- * LIVE_WALLET_TIMEOUT_MS (420000). Run `node scripts/live-setup.mjs` once first.
+ * LIVE_WALLET_TIMEOUT_MS (420000), LIVE_EVENT_CLOCK_OFFSET_MS (500). Run
+ * `node scripts/live-setup.mjs` once first.
  *
  * An Express app on LIVE_ORIGIN's port gates POST /live with `lagoX402`, whose `apiUrl` is a
  * loopback proxy that forwards everything to LAGO_API_URL unchanged and records the usage events
- * it relays (no API change to the package). Then:
+ * it relays (no API change to the package). Its usage events are stamped by a clock
+ * LIVE_EVENT_CLOCK_OFFSET_MS behind this host's, a merchant server lagging Lago, and the agent's
+ * subscription is terminated first, so step 2's purchase opens a fresh one that starts just
+ * before the paid call is served. Then:
  *   1. a plain fetch gets a 402 whose every requirement is on Base Sepolia or Solana devnet;
  *   2. an agent without the sign-in extension pays the top-up and is served with PAYMENT-RESPONSE
  *      (should Lago still be settling it, 503 payment_pending: the agent waits, then signs in);
  *   3. the same key with the sign-in extension is served from its credits and never pays;
  *   4. the paid call's PAYMENT-SIGNATURE, sent again, is refused 409 and neither served nor billed;
  *   5. ten gate checks, counting the distinct Solana fee payers they offer (they rotate);
- *   6. `x402.close()` drains; Lago has both events, and the wallet's ongoing usage rose.
+ *   6. `x402.close()` drains; Lago has both events and bills both, and the wallet's ongoing usage
+ *      rose.
  *
  * Money moves once per run: LIVE_TOP_UP_CENTS on Base Sepolia, never more (the agent's spend cap
  * is that amount), never on any other network (only Base Sepolia is registered, and a 402
@@ -33,7 +38,8 @@ import express from "express";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { lagoX402 } from "../../src/express.js";
-import { createLagoX402, type LagoX402, type LagoX402ErrorWhere } from "../../src/index.js";
+import type { LagoX402, LagoX402ErrorWhere } from "../../src/index.js";
+import { createLagoX402 } from "../../src/x402.js";
 
 const env = process.env;
 const LIVE = Boolean(env.LAGO_API_URL && env.LAGO_API_KEY && env.X402_BUYER_EVM_PRIVATE_KEY);
@@ -198,6 +204,11 @@ interface Wallet {
   ongoing_usage_balance_cents: number;
 }
 
+interface ChargeUsage {
+  units: string;
+  billable_metric: { code: string };
+}
+
 interface LagoEvent {
   transaction_id: string;
   code: string;
@@ -302,6 +313,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
   let routeUrl: string;
   let topUpCents: number;
   let walletTimeoutMs: number;
+  let eventClockOffsetMs: number;
   let api: URL;
   let account: PrivateKeyAccount;
   let proxy: RecordingProxy | undefined;
@@ -332,6 +344,34 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
       // Not JSON: no body to read.
     }
     return { status: res.status, body };
+  }
+
+  const subscriptionId = () => `x402_${account.address}_${planCode}`;
+
+  /** Ends the agent's subscription from an earlier run, if any; 404 when there is none. */
+  async function terminateSubscription(): Promise<void> {
+    const res = await fetch(`${api.href}/subscriptions/${encodeURIComponent(subscriptionId())}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${env.LAGO_API_KEY}`, Accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.status !== 200 && res.status !== 404) {
+      throw new Error(`terminating the agent's subscription answered ${res.status}`);
+    }
+  }
+
+  /** The units the agent's subscription bills for the route's metric so far. */
+  async function readUnits(): Promise<string | undefined> {
+    const customer = encodeURIComponent(`x402_${account.address}`);
+    const subscription = encodeURIComponent(subscriptionId());
+    const { status, body } = await lagoGet(
+      `/customers/${customer}/current_usage?external_subscription_id=${subscription}`,
+    );
+    if (status !== 200) return undefined;
+    const charges = (body as { customer_usage?: { charges_usage?: ChargeUsage[] } } | null)?.customer_usage
+      ?.charges_usage;
+    return charges?.find((charge) => charge.billable_metric.code === metricCode)?.units;
   }
 
   async function readWallet(): Promise<Wallet | undefined> {
@@ -394,31 +434,36 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     routeUrl = new URL(PATH, origin).href;
     topUpCents = positiveInteger("LIVE_TOP_UP_CENTS", "3");
     walletTimeoutMs = positiveInteger("LIVE_WALLET_TIMEOUT_MS", "420000");
+    eventClockOffsetMs = positiveInteger("LIVE_EVENT_CLOCK_OFFSET_MS", "500");
     api = apiBase(env.LAGO_API_URL ?? "");
     account = buyer();
+    await terminateSubscription();
     proxy = await startRecordingProxy(api);
-    x402 = await createLagoX402({
-      apiUrl: proxy.apiUrl,
-      apiKey: env.LAGO_API_KEY ?? "",
-      connectionCode,
-      origin,
-      routes: {
-        [ROUTE]: {
-          billableMetric: metricCode,
-          planCode,
-          walletCode,
-          topUpAmountCents: topUpCents,
-          estimatedCallCostCents: 1,
-          fallbackUsage: 1,
-          wallet: { name: "lago-x402-js live credits", rateAmount: "1" },
-          resource: { description: "lago-x402-js live test", mimeType: "application/json" },
+    x402 = await createLagoX402(
+      {
+        apiUrl: proxy.apiUrl,
+        apiKey: env.LAGO_API_KEY ?? "",
+        connectionCode,
+        origin,
+        routes: {
+          [ROUTE]: {
+            billableMetric: metricCode,
+            planCode,
+            walletCode,
+            topUpAmountCents: topUpCents,
+            estimatedCallCostCents: 1,
+            fallbackUsage: 1,
+            wallet: { name: "lago-x402-js live credits", rateAmount: "1" },
+            resource: { description: "lago-x402-js live test", mimeType: "application/json" },
+          },
+        },
+        onError: (err, where) => {
+          reports.push({ err, where });
+          log(`onError ${where}: ${(err as Error).message}`);
         },
       },
-      onError: (err, where) => {
-        reports.push({ err, where });
-        log(`onError ${where}: ${(err as Error).message}`);
-      },
-    });
+      { now: () => Date.now() - eventClockOffsetMs },
+    );
     const app = express();
     app.post(PATH, lagoX402(x402, ROUTE), (_req, res) => {
       res.locals.lagoUsage = 1;
@@ -574,7 +619,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     log(`step 5: ${distinct.length} distinct Solana fee payers in 10 gate checks: ${distinct.join(", ")}`);
   });
 
-  it("6 · close() drains; Lago has both events, and the wallet's ongoing usage rose", async () => {
+  it("6 · close() drains; Lago has both events and bills both, and the wallet's ongoing usage rose", async () => {
     expect(state.toppedUp && state.signedIn, "steps 2 and 3 must have been served").toBe(true);
     await x402!.close({ timeoutMs: 60_000 });
 
@@ -600,6 +645,17 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
       expect(event.properties).toMatchObject({ value: "1", target_wallet_code: walletCode });
     }
     log(`step 6: Lago has both events (${delivered.map((e) => e.transactionId).join(", ")})`);
+
+    // Stamped by a clock LIVE_EVENT_CLOCK_OFFSET_MS behind, the paid call still falls inside the
+    // subscription its purchase opened: both calls are billed.
+    const billed = await poll("both calls to be billed", walletTimeoutMs, 10_000, async () => {
+      const units = await readUnits();
+      return units !== undefined && Number(units) >= 2 ? units : undefined;
+    });
+    expect(Number(billed)).toBe(2);
+    log(
+      `step 6: the subscription bills ${billed} units with the event clock ${eventClockOffsetMs} ms behind`,
+    );
 
     const baseline = state.baseline!;
     const risen = await poll("the wallet's ongoing usage to rise", walletTimeoutMs, 10_000, async () => {

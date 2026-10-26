@@ -69,7 +69,11 @@ export interface GateDeps {
   client: LagoClient;
   config: NormalizedConfig;
   report: (err: Error, where: LagoX402ErrorWhere) => void;
-  billing: (route: NormalizedRoute, externalSubscriptionId: string) => CallBilling;
+  billing: (
+    route: NormalizedRoute,
+    externalSubscriptionId: string,
+    notBeforeMs: number | null,
+  ) => CallBilling;
 }
 
 export const GATE_CHECKS_PATH = "/x402/gate_checks";
@@ -238,7 +242,7 @@ export class Gate {
     return {
       action: "serve",
       headers: { "Cache-Control": "private" },
-      billing: this.#billing(route, check.externalSubscriptionId),
+      billing: this.#billing(route, check.externalSubscriptionId, null),
       unserved: unavailable,
     };
   }
@@ -405,7 +409,11 @@ export class Gate {
     return {
       action: "serve",
       headers: { "PAYMENT-RESPONSE": paymentResponseHeader(settlement), "Cache-Control": "private" },
-      billing: this.#billing(purchase.route, settlement.externalSubscriptionId),
+      billing: this.#billing(
+        purchase.route,
+        settlement.externalSubscriptionId,
+        settlement.subscriptionStartedAt,
+      ),
       unserved: () =>
         this.#paymentPending(
           new Error(`lago-x402 route "${name}": a paid call's response could not be served`),

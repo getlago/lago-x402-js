@@ -25,6 +25,8 @@ export interface LagoX402 {
 export interface InternalOptions {
   bootRetryBaseMs?: number;
   bootRetryMaxMs?: number;
+  /** The clock usage events are stamped with. */
+  now?: () => number;
 }
 
 interface Internals {
@@ -87,8 +89,8 @@ export async function createLagoX402(
     client,
     config: normalized,
     report,
-    billing: (route, externalSubscriptionId) =>
-      createCallBilling(route, externalSubscriptionId, sender, report),
+    billing: (route, externalSubscriptionId, notBeforeMs) =>
+      createCallBilling(route, externalSubscriptionId, sender, report, notBeforeMs, options.now),
   });
   const boot = new Boot(client, normalized, report, {
     retryBaseMs: options.bootRetryBaseMs ?? BOOT_RETRY_BASE_MS,

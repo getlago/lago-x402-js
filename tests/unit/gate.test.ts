@@ -87,6 +87,7 @@ afterEach(async () => {
 interface Billed {
   route: string;
   externalSubscriptionId: string;
+  notBeforeMs: number | null;
   billing: CallBilling;
 }
 
@@ -134,9 +135,9 @@ function setup(
     report: o.report ?? ((err, where) => void reports.push({ err, where })),
     billing:
       o.billing ??
-      ((r, externalSubscriptionId) => {
+      ((r, externalSubscriptionId, notBeforeMs) => {
         const billing: CallBilling = { finish: async () => {} };
-        billed.push({ route: r.name, externalSubscriptionId, billing });
+        billed.push({ route: r.name, externalSubscriptionId, notBeforeMs, billing });
         return billing;
       }),
   });
@@ -430,6 +431,7 @@ describe("leg 2: SIGN-IN-WITH-X", () => {
       {
         route: "generate",
         externalSubscriptionId: pass.gate_check.external_subscription_id,
+        notBeforeMs: null,
         billing: outcome.billing,
       },
     ]);
@@ -569,9 +571,21 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
       {
         route: "generate",
         externalSubscriptionId: answer.x402_settlement.external_subscription_id,
+        notBeforeMs: Date.parse(answer.x402_settlement.subscription_started_at!),
         billing: outcome.billing,
       },
     ]);
+    expect(reports).toEqual([]);
+  });
+
+  it("a settled answer without subscription_started_at (an older Lago) is billed from the serve time", async () => {
+    const { handle, reports, billed } = setup();
+    const { header } = await paidHeader(handle);
+    answers("credit_purchases", { status: 200, body: settlement({ subscription_started_at: undefined }) });
+
+    const outcome = served(await handle({ "PAYMENT-SIGNATURE": header }));
+
+    expect(billed).toEqual([expect.objectContaining({ notBeforeMs: null, billing: outcome.billing })]);
     expect(reports).toEqual([]);
   });
 
@@ -787,10 +801,8 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
   });
 
   /** Lago answers a payment it already settled from its row, whoever presents it again. */
-  const settledReplay: FakeAnswer = {
-    status: 200,
-    body: settlement({ replayed: true, external_subscription_id: "x402_sub_original_grant" }),
-  };
+  const replayed = settlement({ replayed: true, external_subscription_id: "x402_sub_original_grant" });
+  const settledReplay: FakeAnswer = { status: 200, body: replayed };
 
   it("a settled replay on the first attempt → 409 payment_already_settled: not served, billed or reported", async () => {
     const { handle, reports, billed } = setup();
@@ -844,7 +856,12 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
       expect(e8()).toHaveLength(2);
       expect(e8()[1].rawBody).toBe(e8()[0].rawBody);
       expect(billed).toEqual([
-        { route: "generate", externalSubscriptionId: "x402_sub_original_grant", billing: outcome.billing },
+        {
+          route: "generate",
+          externalSubscriptionId: "x402_sub_original_grant",
+          notBeforeMs: Date.parse(replayed.x402_settlement.subscription_started_at!),
+          billing: outcome.billing,
+        },
       ]);
       expect(reports).toEqual([]);
     },

@@ -89,6 +89,7 @@ export const config: LagoX402Config = {
       walletCode: "agent_credits",
       topUpAmountCents: 100, // an agent without credits pays $1.00 to top up
       estimatedCallCostCents: 2, // served from credits while they cover 2¢
+      fallbackUsage: 4000, // tokens billed for a served call that reports no valid usage
       wallet: { name: "Agent credits", rateAmount: "0.01" }, // 1 credit = 1¢
     },
   },
@@ -185,7 +186,7 @@ export const POST = withLagoX402(x402, "generate", async (req) => {
 
 Create the instance once, in a module every route file imports, as above. Each `createLagoX402(...)` checks every configured route against Lago at boot and keeps its own queue of usage events: one per route file would boot the whole config once per file, and leave a queue per file for `close()` to drain.
 
-The handler returns `{ response, usage }`. A bare `Response` reports no usage, so the call is served unbilled and `usage.extract` is reported. The event goes out through Next's `after()`, once the response has gone out.
+The handler returns `{ response, usage }`. A bare `Response` reports no usage, so the call is billed the route's `fallbackUsage` and `usage.extract` is reported. The event goes out through Next's `after()`, once the response has gone out.
 
 **`next build` evaluates route modules.** With `createLagoX402` at module scope, as above, the build machine boots against Lago while Next collects page data: it needs the config and network access to Lago at build time. Without the config, Next prints the unhandled `LagoX402ConfigError` and the build still completes. To boot on the first request instead, hand `withLagoX402` a lazy promise-like:
 
@@ -236,18 +237,19 @@ A request served from credits costs one gate check; a paid one, a gate check and
 
 ### Routes
 
-| Field                                                       | Required | Meaning                                                                                                                                                                                                                                              |
-| ----------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `billableMetric`                                            | yes      | The code of the route's billable metric. Usage events carry it as their `code`.                                                                                                                                                                      |
-| `planCode`                                                  | yes      | The usage-only USD plan an agent is subscribed to on its first top-up.                                                                                                                                                                               |
-| `walletCode`                                                | yes      | The wallet Lago creates for each agent, which top-ups fill and usage events target.                                                                                                                                                                  |
-| `topUpAmountCents`                                          | yes      | What an agent pays to top up, in US cents: the amount every 402 offers. A positive integer.                                                                                                                                                          |
-| `estimatedCallCostCents`                                    | yes      | What one call is expected to cost, in US cents. Lago serves a signed-in agent from its credits while its wallet balance, less the usage Lago already counted and the calls in flight, covers it; otherwise the agent gets a 402. A positive integer. |
-| `wallet.name`                                               | yes      | The name of the wallet Lago creates.                                                                                                                                                                                                                 |
-| `wallet.rateAmount`                                         | yes      | The dollar value of one credit, as a decimal string with at most 5 decimals: `"1"` is one credit per dollar, `"0.01"` one per cent.                                                                                                                  |
-| `wallet.paidTopUpMinAmountCents`, `paidTopUpMaxAmountCents` | no       | Limits on paid top-ups to that wallet. `topUpAmountCents` must not exceed the maximum.                                                                                                                                                               |
-| `resource`                                                  | no       | `{ description, mimeType, serviceName, tags, iconUrl }`, describing the route in its 402 and in the Bazaar.                                                                                                                                          |
-| `discoverable`, `discovery`                                 | no       | Bazaar listing. See [Bazaar discovery](#bazaar-discovery).                                                                                                                                                                                           |
+| Field                                                       | Required | Meaning                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `billableMetric`                                            | yes      | The code of the route's billable metric. Usage events carry it as their `code`.                                                                                                                                                                          |
+| `planCode`                                                  | yes      | The usage-only USD plan an agent is subscribed to on its first top-up.                                                                                                                                                                                   |
+| `walletCode`                                                | yes      | The wallet Lago creates for each agent, which top-ups fill and usage events target.                                                                                                                                                                      |
+| `topUpAmountCents`                                          | yes      | What an agent pays to top up, in US cents: the amount every 402 offers. A positive integer.                                                                                                                                                              |
+| `estimatedCallCostCents`                                    | yes      | What one call is expected to cost, in US cents. Lago serves a signed-in agent from its credits while its wallet balance, less the usage Lago already counted and the calls in flight, covers it; otherwise the agent gets a 402. A positive integer.     |
+| `fallbackUsage`                                             | yes      | What a served call is billed, in units of the route's metric, when the handler reports no usage or an invalid one, or reading it throws. Set it to the most one call can consume, so a forgotten report never serves a call for free. A positive number. |
+| `wallet.name`                                               | yes      | The name of the wallet Lago creates.                                                                                                                                                                                                                     |
+| `wallet.rateAmount`                                         | yes      | The dollar value of one credit, as a decimal string with at most 5 decimals: `"1"` is one credit per dollar, `"0.01"` one per cent.                                                                                                                      |
+| `wallet.paidTopUpMinAmountCents`, `paidTopUpMaxAmountCents` | no       | Limits on paid top-ups to that wallet. `topUpAmountCents` must not exceed the maximum.                                                                                                                                                                   |
+| `resource`                                                  | no       | `{ description, mimeType, serviceName, tags, iconUrl }`, describing the route in its 402 and in the Bazaar.                                                                                                                                              |
+| `discoverable`, `discovery`                                 | no       | Bazaar listing. See [Bazaar discovery](#bazaar-discovery).                                                                                                                                                                                               |
 
 ### Boot checks
 
@@ -273,7 +275,7 @@ Your handler reports how many units of the route's metric the call consumed:
 - One `POST /events` per served call whose status is below 400, sent after the response has gone out, never batched. It carries the route's metric as `code`, the subscription Lago named for the agent as `external_subscription_id`, and `properties: { value: String(n), target_wallet_code: <walletCode> }`.
 - `transaction_id` (a UUID) and `timestamp` (seconds with millisecond precision) are fixed when the call is served and resent unchanged on every retry, so Lago counts the event once.
 - A status of 400 or more sends no event.
-- `n` must be a finite number, 0 or more. When it is missing or invalid, or reading it throws, no event is sent and `usage.extract` is reported: that call was served unbilled.
+- `n` must be a finite number, 0 or more. When it is missing or invalid, or reading it throws, the event carries the route's `fallbackUsage` instead and `usage.extract` is reported.
 - Express and Hono bill once the response has finished, or when the client goes away after the headers were sent. Next bills through `after()`, which runs even when the client went away first.
 
 ## Shutting down
@@ -330,7 +332,7 @@ Refusals are JSON, `{"error": "<code>"}` (plus `"reason"` on a 401), with `Cache
 | Lago answers 2xx, or a duplicate (`422`, `transaction_id: value_already_exist`)             | counts the event delivered                                        | —               |
 | A network error, a timeout, or Lago answers 5xx, 408 or 429                                 | retries (4 attempts, backoff 0.5, 1 and 2 s ± 20 %), then reports | `usage.send`    |
 | Lago answers any other 4xx, or the queue is full (16 events in flight and 1,000 queued)     | drops the event                                                   | `usage.send`    |
-| The handler reported no usage or an invalid one, or reading it threw, on a status below 400 | sends no event                                                    | `usage.extract` |
+| The handler reported no usage or an invalid one, or reading it threw, on a status below 400 | sends the route's `fallbackUsage` instead                         | `usage.extract` |
 
 ## Error policy
 
@@ -352,10 +354,10 @@ const x402 = await createLagoX402({
 | `boot`          | A route's boot check failed: Lago refused it (`createLagoX402` rejects), or Lago was unreachable (the check is retried, and reported per failed attempt).                   |
 | `gate.check`    | A gate check failed or Lago refused the route's configuration, or a request named a route that is not configured. The agent got 503 `unavailable`.                          |
 | `gate.purchase` | A credit purchase failed, or its outcome is unknown, or a paid call's response could not be served. The agent got 503 or 409. Money may have moved: these are worth a look. |
-| `usage.extract` | A served call reported no usage, or an invalid one. No event was sent: that call is unbilled.                                                                               |
+| `usage.extract` | A served call reported no usage, or an invalid one. It was billed the route's `fallbackUsage` instead.                                                                      |
 | `usage.send`    | A usage event was not delivered: Lago refused it, every attempt failed, or the queue was full.                                                                              |
 
-`usage.extract` is the one to alert on: a handler that forgets to report usage serves its calls for free, and nothing else looks wrong.
+`usage.extract` is the one to alert on: a handler that forgets to report usage bills every call at `fallbackUsage`, and nothing else looks wrong.
 
 Messages carry only route names, Lago endpoint names, HTTP statuses and Lago error codes: never the API key, a payment or sign-in header, or a response body. The errors are exported for `instanceof` checks:
 
@@ -381,6 +383,7 @@ const search: LagoX402Route = {
   walletCode: "agent_credits",
   topUpAmountCents: 100,
   estimatedCallCostCents: 1,
+  fallbackUsage: 1,
   wallet: { name: "Agent credits", rateAmount: "0.01" },
   resource: {
     description: "Web search for agents: 0.2¢ per query, prepaid in $1.00 top-ups.",

@@ -34,6 +34,7 @@ export interface LagoX402Route {
   walletCode: string;
   topUpAmountCents: number;
   estimatedCallCostCents: number;
+  fallbackUsage: number;
   wallet: {
     name: string;
     rateAmount: string;
@@ -69,6 +70,8 @@ export interface NormalizedRoute {
   readonly walletCode: string;
   readonly topUpAmountCents: number;
   readonly estimatedCallCostCents: number;
+  /** Billed for a served call whose usage is missing or invalid, or whose read throws. */
+  readonly fallbackUsage: number;
   readonly wallet: {
     readonly name: string;
     readonly rate_amount: string;
@@ -134,6 +137,10 @@ function nonEmptyString(v: unknown): v is string {
 
 function positiveSafeInt(v: unknown): v is number {
   return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
+}
+
+function positiveFinite(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0;
 }
 
 function parseUrl(v: unknown): URL | null {
@@ -232,6 +239,7 @@ function validateRoute(name: string, raw: unknown): NormalizedRoute {
   if (!positiveSafeInt(raw.estimatedCallCostCents)) {
     fail(name, "estimatedCallCostCents must be a positive safe integer");
   }
+  if (!positiveFinite(raw.fallbackUsage)) fail(name, "fallbackUsage must be a positive finite number");
 
   const w = raw.wallet;
   if (!isRecord(w)) fail(name, "wallet must be an object");
@@ -287,6 +295,7 @@ function validateRoute(name: string, raw: unknown): NormalizedRoute {
     walletCode: raw.walletCode as string,
     topUpAmountCents: raw.topUpAmountCents,
     estimatedCallCostCents: raw.estimatedCallCostCents,
+    fallbackUsage: raw.fallbackUsage,
     wallet: Object.freeze({
       name: w.name,
       rate_amount: w.rateAmount,

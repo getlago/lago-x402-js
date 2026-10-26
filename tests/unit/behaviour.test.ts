@@ -210,6 +210,7 @@ describe.each(FRAMEWORKS)("%s", (fw) => {
           walletCode: "agents_wallet",
           topUpAmountCents: 500,
           estimatedCallCostCents: 2,
+          fallbackUsage: 250,
           wallet: { name: "Agent credits", rateAmount: "1" },
         },
       },
@@ -659,14 +660,16 @@ describe.each(FRAMEWORKS)("%s", (fw) => {
       ["a numeric string", { usage: "3" }, "invalid"],
       ["a throwing getter", { throws: true }, "threw"],
       ["nothing", {}, "missing"],
-    ])("%s → no event, usage.extract", async (_name, h, reason) => {
+    ])("%s → bills the route's fallbackUsage, usage.extract", async (_name, h, reason) => {
       lago.on("gate_checks", funded);
       const { url, settle } = await start(h);
 
       const res = await signingAgent().fetch(url, { method: "POST" });
 
       expect(res.status).toBe(200);
-      expect(await settle()).toStrictEqual([]);
+      const billed = await settle();
+      expect(billed).toHaveLength(1);
+      expect(billed[0].properties.value).toBe("250");
       expectReport("usage.extract", { reason });
       expect(reports[0].err).toBeInstanceOf(LagoX402UsageError);
       // A handler's exception text never reaches a report or the log.

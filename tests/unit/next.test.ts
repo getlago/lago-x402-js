@@ -108,6 +108,7 @@ describe("next", () => {
           walletCode: "agents_wallet",
           topUpAmountCents: 500,
           estimatedCallCostCents: 2,
+          fallbackUsage: 250,
           wallet: { name: "Agent credits", rateAmount: "1" },
         },
       },
@@ -315,7 +316,7 @@ describe("next", () => {
   });
 
   describe("usage", () => {
-    it("a bare Response with status < 400 reports usage.extract (missing) and sends no event", async () => {
+    it("a bare Response with status < 400 bills the route's fallbackUsage and reports usage.extract (missing)", async () => {
       const { x402, settle } = await booted();
       const handler = withLagoX402(x402, ROUTE, async () => Response.json(HANDLER_BODY));
 
@@ -324,7 +325,9 @@ describe("next", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get("cache-control")).toBe("private");
-      expect(await settle()).toStrictEqual([]);
+      const billed = await settle();
+      expect(billed).toHaveLength(1);
+      expect(billed[0].properties.value).toBe("250");
       expect(reports).toHaveLength(1);
       expect(reports[0].where).toBe("usage.extract");
       expect(reports[0].err).toBeInstanceOf(LagoX402UsageError);

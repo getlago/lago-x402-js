@@ -1222,6 +1222,7 @@ function routeConfig(
         walletCode: "agents_wallet",
         topUpAmountCents: 500,
         estimatedCallCostCents: 2,
+        fallbackUsage: 250,
         wallet: { name: "Agent credits", rateAmount: "1" },
       },
     },

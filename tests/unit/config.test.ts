@@ -13,6 +13,7 @@ function route(over: Record<string, unknown> = {}): LagoX402Route {
     walletCode: "x402_wallet",
     topUpAmountCents: 500,
     estimatedCallCostCents: 5,
+    fallbackUsage: 100,
     wallet: { name: "Agent wallet", rateAmount: "0.01" },
     ...over,
   } as LagoX402Route;
@@ -53,6 +54,11 @@ describe("validateConfig: normalization", () => {
     expect(r.discoverable).toBe(false);
     expect(r.resource).toEqual({});
     expect(r.wallet).toEqual({ name: "Agent wallet", rate_amount: "0.01", currency: "USD" });
+  });
+
+  it("keeps a fractional fallbackUsage as given", () => {
+    const n = validateConfig(config({}, { fallbackUsage: 0.5 }));
+    expect(n.routes.get("generate")!.fallbackUsage).toBe(0.5);
   });
 
   it("maps wallet limits to snake_case and passes resource through", () => {
@@ -181,6 +187,12 @@ const rejections: [name: string, input: unknown, route: string | null, reason: s
     "generate",
     "estimatedCallCostCents",
   ],
+  ["fallbackUsage missing", config({}, { fallbackUsage: undefined }), "generate", "fallbackUsage must be"],
+  ["fallbackUsage zero", config({}, { fallbackUsage: 0 }), "generate", "fallbackUsage must be"],
+  ["fallbackUsage negative", config({}, { fallbackUsage: -1 }), "generate", "fallbackUsage must be"],
+  ["fallbackUsage NaN", config({}, { fallbackUsage: NaN }), "generate", "fallbackUsage must be"],
+  ["fallbackUsage infinite", config({}, { fallbackUsage: Infinity }), "generate", "fallbackUsage must be"],
+  ["fallbackUsage string", config({}, { fallbackUsage: "100" }), "generate", "fallbackUsage must be"],
   ["wallet missing", config({}, { wallet: undefined }), "generate", "wallet must be an object"],
   ["wallet name empty", config({}, { wallet: { name: "", rateAmount: "1" } }), "generate", "wallet.name"],
   ["rate 0", config({}, { wallet: { name: "w", rateAmount: "0" } }), "generate", "wallet.rateAmount"],

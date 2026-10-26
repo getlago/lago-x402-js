@@ -8,10 +8,10 @@
  *   });
  *
  * The handler reports usage by returning `{ response, usage }`; a bare `Response` reports none, so
- * a served status below 400 then sends no event and reports `usage.extract`. The call is billed
- * through Next's `after()`: the task runs once the response has gone out, and Next keeps the
- * delivery alive past the request's end (to completion on `next start`; within the function's
- * `maxDuration` on serverless). It cannot see a client going away.
+ * a served status below 400 is billed the route's `fallbackUsage` and reports `usage.extract`. The
+ * call is billed through Next's `after()`: the task runs once the response has gone out, and Next
+ * keeps the delivery alive past the request's end (to completion on `next start`; within the
+ * function's `maxDuration` on serverless). It cannot see a client going away.
  *
  * Served responses get `PAYMENT-RESPONSE` after a payment and `private` merged into whatever
  * `Cache-Control` the handler sends (a response with immutable headers, as `fetch()` returns, is

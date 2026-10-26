@@ -409,6 +409,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
           walletCode,
           topUpAmountCents: topUpCents,
           estimatedCallCostCents: 1,
+          fallbackUsage: 1,
           wallet: { name: "lago-x402-js live credits", rateAmount: "1" },
           resource: { description: "lago-x402-js live test", mimeType: "application/json" },
         },

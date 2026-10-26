@@ -1,7 +1,7 @@
-/** Usage events: one `POST /events` per served call, valued from what the handler reported,
- * retried with the same bytes, bounded in concurrency and queue, and never able to break a
- * response. Error messages are constant: they never carry the reported value or a handler's
- * exception text. */
+/** Usage events: one `POST /events` per served call, valued from what the handler reported (the
+ * route's `fallbackUsage` when that is missing or invalid), retried with the same bytes, bounded
+ * in concurrency and queue, and never able to break a response. Error messages are constant: they
+ * never carry the reported value or a handler's exception text. */
 import { randomUUID } from "node:crypto";
 import type { LagoX402ErrorWhere, NormalizedRoute } from "./config.js";
 import { LagoApiError, LagoUnreachableError, LagoX402UsageError, sanitizedLagoCodes } from "./errors.js";
@@ -181,6 +181,27 @@ function usageError(reason: LagoX402UsageError["reason"]): LagoX402UsageError {
   return new LagoX402UsageError(reason);
 }
 
+/** What the handler reported, or `fallback` (reported as `usage.extract`) when it is missing or
+ * invalid, or reading it throws: a served call is never left unbilled. */
+function reportedUsage(readUsage: () => unknown, fallback: number, report: ReportFn): number {
+  let reported: unknown;
+  try {
+    reported = readUsage();
+  } catch {
+    safeReport(report, usageError("threw"), "usage.extract");
+    return fallback;
+  }
+  if (reported === undefined) {
+    safeReport(report, usageError("missing"), "usage.extract");
+    return fallback;
+  }
+  if (typeof reported !== "number" || !Number.isFinite(reported) || reported < 0) {
+    safeReport(report, usageError("invalid"), "usage.extract");
+    return fallback;
+  }
+  return reported;
+}
+
 /** Fixes `transaction_id` and `timestamp` (millisecond precision) now (serve time), so every retry carries both. */
 export function createCallBilling(
   route: NormalizedRoute,
@@ -194,27 +215,13 @@ export function createCallBilling(
 
   const run = async (status: number, readUsage: () => unknown): Promise<void> => {
     if (status >= 400) return;
-    let reported: unknown;
-    try {
-      reported = readUsage();
-    } catch {
-      safeReport(report, usageError("threw"), "usage.extract");
-      return;
-    }
-    if (reported === undefined) {
-      safeReport(report, usageError("missing"), "usage.extract");
-      return;
-    }
-    if (typeof reported !== "number" || !Number.isFinite(reported) || reported < 0) {
-      safeReport(report, usageError("invalid"), "usage.extract");
-      return;
-    }
+    const usage = reportedUsage(readUsage, route.fallbackUsage, report);
     await sender.send({
       transactionId,
       externalSubscriptionId,
       code: route.billableMetric,
       timestamp,
-      value: String(reported === 0 ? 0 : reported),
+      value: String(usage === 0 ? 0 : usage),
       walletCode: route.walletCode,
     });
   };

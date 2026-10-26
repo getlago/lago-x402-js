@@ -16,7 +16,11 @@ vi.mock("node:crypto", async (importOriginal) => {
 let lago: FakeLago;
 let reports: { err: Error; where: LagoX402ErrorWhere }[];
 const report = (err: Error, where: LagoX402ErrorWhere): void => void reports.push({ err, where });
-const route = { billableMetric: "tokens", walletCode: "agents_wallet" } as NormalizedRoute;
+const route = {
+  billableMetric: "tokens",
+  walletCode: "agents_wallet",
+  fallbackUsage: 250,
+} as NormalizedRoute;
 
 beforeEach(async () => {
   lago = await startFakeLago();
@@ -93,28 +97,37 @@ describe("createCallBilling", () => {
     ).toBe("0");
   });
 
-  it.each([NaN, -1, Infinity, -Infinity, "12", null, 10n, {}])("rejects %s as invalid", async (v) => {
-    await bill(200, () => v);
-    expect(lago.requests).toHaveLength(0);
-    expect(reports).toHaveLength(1);
-    expect(reports[0].where).toBe("usage.extract");
-    expect(reports[0].err).toBeInstanceOf(LagoX402UsageError);
-    expect((reports[0].err as LagoX402UsageError).reason).toBe("invalid");
-    expect(reports[0].err.message).not.toContain(String(v));
-  });
+  function billedValues(): string[] {
+    return lago.requests.map(
+      (r) => (r.json as { event: { properties: { value: string } } }).event.properties.value,
+    );
+  }
 
-  it("reports undefined as missing", async () => {
+  it.each([NaN, -1, Infinity, -Infinity, "12", null, 10n, {}])(
+    "bills the route's fallbackUsage for %s, reported as invalid",
+    async (v) => {
+      await bill(200, () => v);
+      expect(billedValues()).toEqual(["250"]);
+      expect(reports).toHaveLength(1);
+      expect(reports[0].where).toBe("usage.extract");
+      expect(reports[0].err).toBeInstanceOf(LagoX402UsageError);
+      expect((reports[0].err as LagoX402UsageError).reason).toBe("invalid");
+      expect(reports[0].err.message).not.toContain(String(v));
+    },
+  );
+
+  it("bills the route's fallbackUsage for undefined, reported as missing", async () => {
     await bill(200, () => undefined);
-    expect(lago.requests).toHaveLength(0);
+    expect(billedValues()).toEqual(["250"]);
     expect((reports[0].err as LagoX402UsageError).reason).toBe("missing");
     expect(reports[0].where).toBe("usage.extract");
   });
 
-  it("reports a throwing reader as threw, without its message or a cause", async () => {
+  it("bills the route's fallbackUsage for a throwing reader, reported as threw without its message or a cause", async () => {
     await bill(200, () => {
       throw new Error("customer secret 4111111111111111");
     });
-    expect(lago.requests).toHaveLength(0);
+    expect(billedValues()).toEqual(["250"]);
     const err = reports[0].err as LagoX402UsageError;
     expect(err.reason).toBe("threw");
     expect(reports[0].where).toBe("usage.extract");

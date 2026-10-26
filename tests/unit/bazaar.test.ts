@@ -26,6 +26,7 @@ function config(routeOver: Record<string, unknown> = {}): LagoX402Config {
         walletCode: "wallet",
         topUpAmountCents: 500,
         estimatedCallCostCents: 2,
+        fallbackUsage: 250,
         wallet: { name: "w", rateAmount: "1" },
         ...routeOver,
       },

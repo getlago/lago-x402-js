@@ -467,6 +467,7 @@ console.log(res.status, await res.json());
 12. **Lago always settles.** The middleware never records a payment settled elsewhere: lago-api has no such record mode yet, and every payment goes through Lago's credit purchase.
 13. **A local Lago behind mkcert TLS** needs Node to trust the mkcert root: set `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"` in the process environment. There is no TLS option in the library's config.
 14. **Changing an offer while a payment is pending.** If you change a route's `topUpAmountCents`, or the connection's pay-to, between an agent's `503 payment_pending` and its next attempt, that attempt gets the new offer, and a payment signed for the old one matches nothing (`stale_challenge`). An agent that signs in is served from its first payment's credits once Lago has granted them; one that does not sign in, as a stock client without the sign-in extension, pays the new top-up. The first payment's credits are kept in its wallet either way.
+15. **Usage events live in memory.** Each instance queues its events in its own process and writes nothing to disk. Events still queued or being retried are lost when the process crashes or is killed, or when `close()` times out, and a full queue (16 in flight, 1,000 waiting) drops new ones, reported as `usage.send`. Those calls stay unbilled. Await `close()` on shutdown, as in the quickstarts.
 
 ## Development
 

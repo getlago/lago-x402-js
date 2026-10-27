@@ -431,13 +431,24 @@ describe("leg 2: SIGN-IN-WITH-X", () => {
       {
         route: "generate",
         externalSubscriptionId: pass.gate_check.external_subscription_id,
-        notBeforeMs: null,
+        notBeforeMs: Date.parse(pass.gate_check.subscription_started_at!),
         billing: outcome.billing,
       },
     ]);
     expect(outcome.billing).toBe(billed[0].billing);
     expect(e7()).toHaveLength(2);
     expect(e8()).toHaveLength(0);
+    expect(reports).toEqual([]);
+  });
+
+  it("a pass without subscription_started_at (an older Lago) is billed from the serve time", async () => {
+    const { handle, reports, billed } = setup();
+    const proof = await signIn(evmAgent(), await handle());
+    answers("gate_checks", { status: 200, body: gateCheckPass({ subscription_started_at: undefined }) });
+
+    const outcome = served(await handle({ "SIGN-IN-WITH-X": proof }));
+
+    expect(billed).toEqual([expect.objectContaining({ notBeforeMs: null, billing: outcome.billing })]);
     expect(reports).toEqual([]);
   });
 

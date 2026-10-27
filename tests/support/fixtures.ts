@@ -62,17 +62,20 @@ export interface GateCheck {
   balance_credits: string;
   requirements: Requirement[] | null;
   external_subscription_id: string | null;
+  subscription_started_at: string | null;
   sign_in_chains: string[] | null;
 }
 
 /** Mirrors `app/serializers/v1/x402/gate_check_serializer.rb`: a challenge carries
- * `requirements` and `sign_in_chains`. */
+ * `requirements` and `sign_in_chains`; `subscription_started_at` (iso8601, milliseconds) goes
+ * with `external_subscription_id`. */
 export function gateCheckChallenge(o: Partial<GateCheck> = {}): { gate_check: GateCheck } {
   return {
     gate_check: {
       balance_credits: "0.0",
       requirements: [evmRequirement()],
       external_subscription_id: null,
+      subscription_started_at: null,
       sign_in_chains: [BASE_SEPOLIA, SOLANA_DEVNET],
       ...o,
     },
@@ -86,6 +89,7 @@ export function gateCheckPass(o: Partial<GateCheck> = {}): { gate_check: GateChe
       balance_credits: "10.0",
       requirements: null,
       external_subscription_id: "x402_sub_" + randomUUID(),
+      subscription_started_at: new Date().toISOString(),
       sign_in_chains: null,
       ...o,
     },

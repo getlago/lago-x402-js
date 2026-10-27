@@ -33,7 +33,12 @@ export interface LagoRequirement {
 /** E7's answer (`app/serializers/v1/x402/gate_check_serializer.rb`), discriminated on
  * `requirements`. */
 export type GateCheck =
-  | { kind: "pass"; externalSubscriptionId: string }
+  | {
+      kind: "pass";
+      externalSubscriptionId: string;
+      /** When Lago started that subscription, in epoch milliseconds. */
+      subscriptionStartedAt: number | null;
+    }
   | { kind: "challenge"; requirements: LagoRequirement[]; signInChains: string[] };
 
 /** E8's answer (`app/serializers/v1/x402/settlement_serializer.rb`), the fields the gate uses. */
@@ -144,14 +149,20 @@ function parseRequirement(entry: unknown): LagoRequirement | null {
 
 /** Pass = `requirements: null` with a subscription; challenge = a non-empty, well-formed
  * `requirements` array plus `sign_in_chains` (absent on a Lago without sign-in-with-x on gate
- * checks). Anything else throws `LagoApiError` `unexpected_answer`. */
+ * checks). Anything else throws `LagoApiError` `unexpected_answer`. A pass's
+ * `subscription_started_at` is lenient: absent or unreadable gives null, and the call is stamped
+ * at serve time. */
 export function parseGateCheck(body: unknown): GateCheck {
   const answer = isPlainObject(body) ? body.gate_check : undefined;
   if (!isPlainObject(answer)) throw unexpectedAnswer("gate_checks");
 
   if (answer.requirements === null) {
     if (isNonEmptyString(answer.external_subscription_id)) {
-      return { kind: "pass", externalSubscriptionId: answer.external_subscription_id };
+      return {
+        kind: "pass",
+        externalSubscriptionId: answer.external_subscription_id,
+        subscriptionStartedAt: epochMsOrNull(answer.subscription_started_at),
+      };
     }
     throw unexpectedAnswer("gate_checks");
   }

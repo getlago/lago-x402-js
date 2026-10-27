@@ -4,7 +4,7 @@
  * and X402_BUYER_EVM_PRIVATE_KEY (a funded Base Sepolia buyer) are set. Optional, with the
  * defaults scripts/live-setup.mjs creates: LAGO_X402_CONNECTION_CODE, LIVE_PLAN_CODE,
  * LIVE_METRIC_CODE, LIVE_WALLET_CODE, LIVE_ORIGIN (http://localhost:4021), LIVE_TOP_UP_CENTS (3),
- * LIVE_WALLET_TIMEOUT_MS (420000), LIVE_EVENT_CLOCK_OFFSET_MS (500). Run
+ * LIVE_WALLET_TIMEOUT_MS (420000), LIVE_EVENT_CLOCK_OFFSET_MS (5000). Run
  * `node scripts/live-setup.mjs` once first.
  *
  * An Express app on LIVE_ORIGIN's port gates POST /live with `lagoX402`, whose `apiUrl` is a
@@ -12,7 +12,8 @@
  * it relays (no API change to the package). Its usage events are stamped by a clock
  * LIVE_EVENT_CLOCK_OFFSET_MS behind this host's, a merchant server lagging Lago, and the agent's
  * subscription is terminated first, so step 2's purchase opens a fresh one that starts just
- * before the paid call is served. Then:
+ * before the paid call is served. By default the lag outlasts steps 2 and 3, so both calls are
+ * billed only through the subscription start Lago returns. Then:
  *   1. a plain fetch gets a 402 whose every requirement is on Base Sepolia or Solana devnet;
  *   2. an agent without the sign-in extension pays the top-up and is served with PAYMENT-RESPONSE
  *      (should Lago still be settling it, 503 payment_pending: the agent waits, then signs in);
@@ -434,7 +435,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     routeUrl = new URL(PATH, origin).href;
     topUpCents = positiveInteger("LIVE_TOP_UP_CENTS", "3");
     walletTimeoutMs = positiveInteger("LIVE_WALLET_TIMEOUT_MS", "420000");
-    eventClockOffsetMs = positiveInteger("LIVE_EVENT_CLOCK_OFFSET_MS", "500");
+    eventClockOffsetMs = positiveInteger("LIVE_EVENT_CLOCK_OFFSET_MS", "5000");
     api = apiBase(env.LAGO_API_URL ?? "");
     account = buyer();
     await terminateSubscription();
@@ -646,8 +647,8 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     }
     log(`step 6: Lago has both events (${delivered.map((e) => e.transactionId).join(", ")})`);
 
-    // Stamped by a clock LIVE_EVENT_CLOCK_OFFSET_MS behind, the paid call still falls inside the
-    // subscription its purchase opened: both calls are billed.
+    // Stamped by a clock LIVE_EVENT_CLOCK_OFFSET_MS behind, both calls still fall inside the
+    // subscription the purchase opened: both are billed.
     const billed = await poll("both calls to be billed", walletTimeoutMs, 10_000, async () => {
       const units = await readUnits();
       return units !== undefined && Number(units) >= 2 ? units : undefined;

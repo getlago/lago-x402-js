@@ -148,6 +148,7 @@ describe("parseGateCheck", () => {
     expect(parseGateCheck(pass)).toEqual({
       kind: "pass",
       externalSubscriptionId: pass.gate_check.external_subscription_id,
+      subscriptionStartedAt: Date.parse(pass.gate_check.subscription_started_at!),
     });
 
     const body = gateCheckChallenge({ requirements: [evmRequirement(), solanaRequirement()] });
@@ -156,6 +157,21 @@ describe("parseGateCheck", () => {
       requirements: body.gate_check.requirements,
       signInChains: [BASE_SEPOLIA, SOLANA_DEVNET],
     });
+  });
+
+  it("reads a pass's subscription_started_at as epoch milliseconds", () => {
+    const body = gateCheckPass({ subscription_started_at: "2026-10-21T12:00:00.315Z" });
+    expect(parseGateCheck(body)).toMatchObject({ kind: "pass", subscriptionStartedAt: 1_792_584_000_315 });
+  });
+
+  it.each<[string, unknown]>([
+    ["an absent", undefined],
+    ["a null", null],
+    ["an unreadable", "yesterday"],
+    ["a numeric", 1_792_584_000_315],
+  ])("reads %s subscription_started_at on a pass as null rather than refusing the call", (_name, value) => {
+    const body = gateCheckPass({ subscription_started_at: value as never });
+    expect(parseGateCheck(body)).toMatchObject({ kind: "pass", subscriptionStartedAt: null });
   });
 
   const challengeWith = (entry: Record<string, unknown>) =>

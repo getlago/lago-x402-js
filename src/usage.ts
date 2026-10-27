@@ -203,8 +203,9 @@ function reportedUsage(readUsage: () => unknown, fallback: number, report: Repor
 }
 
 /** Fixes `transaction_id` and `timestamp` (millisecond precision) now (serve time), so every retry
- * carries both. The timestamp is never before `notBeforeMs`, the start of the subscription a paid
- * call bills: Lago counts events from that start, and this server's clock may lag Lago's. */
+ * carries both. The timestamp is never before `notBeforeMs`, the start of the subscription the call
+ * bills, as Lago's credit purchase or gate check answered it: Lago counts events from that start,
+ * and this server's clock may lag Lago's. */
 export function createCallBilling(
   route: NormalizedRoute,
   externalSubscriptionId: string,

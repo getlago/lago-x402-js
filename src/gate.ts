@@ -89,7 +89,7 @@ interface Menu {
 }
 
 type GateCheckResult =
-  | { kind: "pass"; externalSubscriptionId: string }
+  | { kind: "pass"; externalSubscriptionId: string; subscriptionStartedAt: number | null }
   | { kind: "challenge"; menu: Menu }
   | { kind: "done"; outcome: GateOutcome };
 
@@ -242,7 +242,7 @@ export class Gate {
     return {
       action: "serve",
       headers: { "Cache-Control": "private" },
-      billing: this.#billing(route, check.externalSubscriptionId, null),
+      billing: this.#billing(route, check.externalSubscriptionId, check.subscriptionStartedAt),
       unserved: unavailable,
     };
   }

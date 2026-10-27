@@ -59,8 +59,10 @@ const E8_PENDING_BASE_CODES: readonly string[] = [
  * credit_purchases/purchase_service.rb#refuse_grant (money already moved: never a 402). */
 const CREDIT_GRANT_FAILED = "credit_grant_failed";
 
-/** E8 `payment: recorded_as_invoice_payment`: credit_purchases/purchase_service.rb#refuse_invoice_payment. */
-const RECORDED_AS_INVOICE_PAYMENT = "recorded_as_invoice_payment";
+/** E8 `base: payment_already_settled`: credit_purchases/purchase_service.rb#refuse_replay. The
+ * payment was recorded under another request's `idempotency_key`, or as an invoice payment:
+ * someone presented it again, so nothing is reported. */
+const PAYMENT_ALREADY_SETTLED = "payment_already_settled";
 
 /** E8 `payment_requirements: amount_above_maximum`: credit_purchases/validate_service.rb. */
 const AMOUNT_ABOVE_MAXIMUM = "amount_above_maximum";
@@ -151,9 +153,6 @@ export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): De
   if (!validation) return unavailable("credit_purchases", answer);
 
   if (rawFieldsAre(answer.body, PAYMENT_FIELDS)) {
-    if (errorCodes.payment?.includes(RECORDED_AS_INVOICE_PAYMENT)) {
-      return { kind: "refuse", status: 409, error: "payment_already_used", report: report() };
-    }
     if (errorCodes.payment_requirements?.includes(AMOUNT_ABOVE_MAXIMUM)) {
       return unavailable("credit_purchases", answer);
     }
@@ -168,6 +167,8 @@ export function mapCreditPurchaseRefusal(answer: LagoAnswer, attempt: 1 | 2): De
 
   const base = onlyField(answer.body, errorCodes, "base")?.[0];
   if (base === BUYER_NOT_RECOGNIZED) return buyerNotRecognized;
+  if (base === PAYMENT_ALREADY_SETTLED)
+    return { kind: "refuse", status: 409, error: PAYMENT_ALREADY_SETTLED };
   if (base !== undefined && E8_PENDING_BASE_CODES.includes(base)) return pending();
   if (base === CREDIT_GRANT_FAILED) {
     return attempt === 1 ? { kind: "retry", why: "grant" } : pending(report());

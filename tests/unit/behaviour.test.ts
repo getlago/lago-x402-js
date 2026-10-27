@@ -126,14 +126,20 @@ function settles(r: RecordedRequest): FakeAnswer {
 }
 
 /** E8 as Lago runs it: settles a payment once, then answers it again from its row
- * (`replayed: true`) for as long as it is kept, whoever presents it. */
+ * (`replayed: true`) only under the `idempotency_key` of the request that settled it, and
+ * refuses any other presentation with `base: payment_already_settled`. */
 function settlesOnce(): (r: RecordedRequest) => FakeAnswer {
-  const seen = new Set<string>();
+  const keys = new Map<string, unknown>();
   return (r) => {
     const answer = settles(r);
     const nonce = paymentOf(r).payload.authorization.nonce;
-    const replayed = seen.has(nonce);
-    seen.add(nonce);
+    const key = (r.json as { credit_purchase: { idempotency_key?: unknown } }).credit_purchase
+      .idempotency_key;
+    if (keys.has(nonce) && keys.get(nonce) !== key) {
+      return { status: 422, body: validationErrors({ base: ["payment_already_settled"] }) };
+    }
+    const replayed = keys.has(nonce);
+    keys.set(nonce, key);
     const { x402_settlement } = answer.body as ReturnType<typeof settlement>;
     return { ...answer, body: { x402_settlement: { ...x402_settlement, replayed } } };
   };
@@ -440,7 +446,14 @@ describe.each(FRAMEWORKS)("%s", (fw) => {
 
       await expectRefusal(replay, 409, { error: "payment_already_settled" });
       expect(e8()).toHaveLength(2);
-      expect(e8()[1].rawBody).toBe(e8()[0].rawBody);
+      const [first, second] = e8().map(
+        (r) => (r.json as { credit_purchase: Record<string, unknown> }).credit_purchase,
+      );
+      expect(second.idempotency_key).not.toBe(first.idempotency_key);
+      expect({ ...second, idempotency_key: undefined }).toStrictEqual({
+        ...first,
+        idempotency_key: undefined,
+      });
       const billed = await settle();
       expect(billed).toHaveLength(1);
       expect(billed[0].external_subscription_id).toBe(subscriptionFor(agent.agent.account.address));
@@ -499,17 +512,17 @@ describe.each(FRAMEWORKS)("%s", (fw) => {
       expectReport("gate.purchase", { endpoint: "credit_purchases", status: 422 });
     });
 
-    it("E8 {payment:[recorded_as_invoice_payment]} → 409 payment_already_used, gate.purchase", async () => {
+    it("E8 {base:[payment_already_settled]} → 409 payment_already_settled, not reported", async () => {
       lago.on("credit_purchases", () => ({
         status: 422,
-        body: validationErrors({ payment: ["recorded_as_invoice_payment"] }),
+        body: validationErrors({ base: ["payment_already_settled"] }),
       }));
       const { url } = await start({ usage: 1 });
 
       await expectRefusal(await payingAgent().fetch(url, { method: "POST" }), 409, {
-        error: "payment_already_used",
+        error: "payment_already_settled",
       });
-      expectReport("gate.purchase", { endpoint: "credit_purchases", status: 422 });
+      expect(reports).toStrictEqual([]);
     });
 
     it("E8 credit_grant_failed twice → one retry, then 503 payment_pending, Retry-After 30, never 402", async () => {

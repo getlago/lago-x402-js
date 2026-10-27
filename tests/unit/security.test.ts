@@ -943,11 +943,11 @@ const SCENARIOS: Scenario[] = [
     reports: ["gate.purchase"],
   },
   {
-    name: "leg 3: E8 recorded_as_invoice_payment",
+    name: "leg 3: E8 payment_already_settled",
     send: paid,
-    lago: { credit_purchases: leakyValidation({ payment: ["recorded_as_invoice_payment"] }, false) },
+    lago: { credit_purchases: leakyValidation({ base: ["payment_already_settled"] }, false) },
     status: 409,
-    reports: ["gate.purchase"],
+    reports: [],
   },
   {
     name: "leg 3: E8 buyer_not_recognized",

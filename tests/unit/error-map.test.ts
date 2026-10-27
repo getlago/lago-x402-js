@@ -137,10 +137,9 @@ describe("mapGateCheckRefusal (E7)", () => {
 describe("mapCreditPurchaseRefusal (E8)", () => {
   const rows: Row[] = [
     {
-      name: "recorded_as_invoice_payment",
-      answer: v({ payment: ["recorded_as_invoice_payment"] }),
-      expected: { kind: "refuse", status: 409, error: "payment_already_used" },
-      report: true,
+      name: "payment_already_settled",
+      answer: v({ base: ["payment_already_settled"] }),
+      expected: { kind: "refuse", status: 409, error: "payment_already_settled" },
     },
     {
       name: "payment_requirements amount_above_maximum",
@@ -321,16 +320,18 @@ describe("mapCreditPurchaseRefusal (E8)", () => {
     });
   });
 
-  it("amount_above_maximum and recorded_as_invoice_payment win inside a payment-only 422", () => {
+  it("amount_above_maximum wins inside a payment-only 422", () => {
     expect(
       mapCreditPurchaseRefusal(v({ payment: ["x"], payment_requirements: ["amount_above_maximum"] }), 1),
     ).toMatchObject(unavailable);
-    expect(
-      mapCreditPurchaseRefusal(
-        v({ payment: ["recorded_as_invoice_payment"], payment_requirements: ["y"] }),
-        1,
-      ),
-    ).toMatchObject({ status: 409 });
+  });
+
+  it("payment_already_settled on the retry is still a 409, never pending", () => {
+    expect(mapCreditPurchaseRefusal(v({ base: ["payment_already_settled"] }), 2)).toEqual({
+      kind: "refuse",
+      status: 409,
+      error: "payment_already_settled",
+    });
   });
 
   it.each([

@@ -19,7 +19,13 @@ import { Gate, type CallBilling, type GateDeps, type GateOutcome, type GateReque
 import { LagoClient } from "../../src/lago-client.js";
 import { DEFAULT_SIGN_IN_STATEMENT, SIGN_IN_WITH_X, decodeSignInHeader } from "../../src/wire.js";
 import { evmAgent, solanaPayment, type EvmAgent } from "../support/agent.js";
-import { startFakeLago, type FakeAnswer, type FakeLago, type FakeRoute } from "../support/fake-lago.js";
+import {
+  startFakeLago,
+  type FakeAnswer,
+  type FakeLago,
+  type FakeRoute,
+  type RecordedRequest,
+} from "../support/fake-lago.js";
 import {
   BASE_SEPOLIA,
   SOLANA_DEVNET,
@@ -261,8 +267,9 @@ function forwarded(header: string): Record<string, unknown> {
   return out;
 }
 
-/** E8's exact raw body for a payment header. */
-function expectedPurchase(header: string): string {
+/** E8's exact raw body for a payment header, under the request's `idempotency_key` (left out
+ * when `key` is undefined). */
+function expectedPurchase(header: string, key: string | undefined): string {
   return JSON.stringify({
     credit_purchase: {
       connection_code: "conn_test",
@@ -271,8 +278,21 @@ function expectedPurchase(header: string): string {
       wallet: WALLET,
       payment: forwarded(header),
       payment_requirements: decoded(header).accepted,
+      idempotency_key: key,
     },
   });
+}
+
+/** The `idempotency_key` an E8 request carried. */
+function keyOf(request: RecordedRequest): unknown {
+  return (request.json as { credit_purchase: { idempotency_key?: unknown } }).credit_purchase.idempotency_key;
+}
+
+/** An E8 raw body without its `idempotency_key`. */
+function withoutKey(rawBody: string): string {
+  const body = JSON.parse(rawBody) as { credit_purchase: Record<string, unknown> };
+  delete body.credit_purchase.idempotency_key;
+  return JSON.stringify(body);
 }
 
 /** A paying EVM agent's header built from a leg-1 402 on the default menu; the recorded
@@ -541,7 +561,7 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     expect(e7()[0].rawBody).toBe(E7_BODY);
     expect(e8()).toHaveLength(1);
     const raw = e8()[0].rawBody;
-    expect(raw).toBe(expectedPurchase(header));
+    expect(raw).toBe(expectedPurchase(header, keyOf(e8()[0]) as string));
     const purchase = (e8()[0].json as { credit_purchase: Record<string, Record<string, unknown>> })
       .credit_purchase;
     expect(Object.keys(purchase)).toEqual([
@@ -551,6 +571,7 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
       "wallet",
       "payment",
       "payment_requirements",
+      "idempotency_key",
     ]);
     expect(purchase.wallet).toStrictEqual(WALLET);
     expect(purchase.payment_requirements).toStrictEqual(sent.accepted);
@@ -675,7 +696,7 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     answers("gate_checks", challengeWith({ ...evmRequirement(), extra: reordered as never }));
     served(await handle({ "PAYMENT-SIGNATURE": header }));
     expect(e8()).toHaveLength(1);
-    expect(e8()[0].rawBody).toBe(expectedPurchase(header));
+    expect(e8()[0].rawBody).toBe(expectedPurchase(header, keyOf(e8()[0]) as string));
   });
 
   it.each<[string, (accepted: Record<string, unknown>) => void]>([
@@ -731,7 +752,7 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     served(await handle({ "PAYMENT-SIGNATURE": header }));
 
     expect(e8()).toHaveLength(1);
-    expect(e8()[0].rawBody).toBe(expectedPurchase(header));
+    expect(e8()[0].rawBody).toBe(expectedPurchase(header, keyOf(e8()[0]) as string));
     const purchase = (e8()[0].json as { credit_purchase: { payment_requirements: { extra: object } } })
       .credit_purchase;
     expect(purchase.payment_requirements.extra).toStrictEqual({ feePayer: FEE_PAYER_402 });
@@ -775,7 +796,7 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     expect(e7()).toHaveLength(1);
     expect(e7()[0].rawBody).toBe(E7_BODY);
     expect(e8()).toHaveLength(1);
-    expect(e8()[0].rawBody).toBe(expectedPurchase(header));
+    expect(e8()[0].rawBody).toBe(expectedPurchase(header, keyOf(e8()[0]) as string));
     const signature = decodeSignInHeader(proof)!.signature as string;
     for (const req of lago.requests) {
       expect(req.rawBody).not.toContain(signature);
@@ -878,6 +899,28 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     },
   );
 
+  it("E8's body carries a random 43-character idempotency_key", async () => {
+    const { handle } = setup();
+    const { header } = await paidHeader(handle);
+    answers("credit_purchases", { status: 200, body: settlement() });
+
+    served(await handle({ "PAYMENT-SIGNATURE": header }));
+
+    expect(keyOf(e8()[0])).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  it("each paid request sends its own idempotency_key, even for the same PAYMENT-SIGNATURE", async () => {
+    const { handle } = setup();
+    const { header } = await paidHeader(handle);
+    answers("credit_purchases", { status: 200, body: settlement() }, { status: 200, body: settlement() });
+
+    served(await handle({ "PAYMENT-SIGNATURE": header }));
+    await handle({ "PAYMENT-SIGNATURE": header });
+
+    expect(e8()).toHaveLength(2);
+    expect(keyOf(e8()[1])).not.toBe(keyOf(e8()[0]));
+  });
+
   it("credit_grant_failed → one identical E8 retry → served", async () => {
     const { handle, reports, billed } = setup();
     const { header } = await paidHeader(handle);
@@ -886,7 +929,7 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
     served(await handle({ "PAYMENT-SIGNATURE": header }));
 
     expect(e8()).toHaveLength(2);
-    expect(e8()[0].rawBody).toBe(expectedPurchase(header));
+    expect(e8()[0].rawBody).toBe(expectedPurchase(header, keyOf(e8()[0]) as string));
     expect(e8()[1].rawBody).toBe(e8()[0].rawBody);
     expect(e7()).toHaveLength(1);
     expect(billed).toHaveLength(1);
@@ -1053,12 +1096,12 @@ describe("leg 3: PAYMENT-SIGNATURE", () => {
 
   it.each<[string, FakeAnswer, number, Record<string, string>, string | undefined, boolean]>([
     [
-      "recorded_as_invoice_payment",
-      { status: 422, body: validationErrors({ payment: ["recorded_as_invoice_payment"] }) },
+      "payment_already_settled",
+      { status: 422, body: validationErrors({ base: ["payment_already_settled"] }) },
       409,
-      { error: "payment_already_used" },
+      { error: "payment_already_settled" },
       undefined,
-      true,
+      false,
     ],
     [
       "buyer_not_recognized",
@@ -1260,7 +1303,7 @@ describe("security", () => {
         request({ ...hostile, "PAYMENT-SIGNATURE": header }, "https://attacker.example/v1/generate"),
       ),
     );
-    expect(e8()[0].rawBody).toBe(expectedPurchase(header));
+    expect(e8()[0].rawBody).toBe(expectedPurchase(header, keyOf(e8()[0]) as string));
     expect(e8()[0].rawBody).not.toContain("attacker");
   });
 
@@ -1344,12 +1387,13 @@ describe("security", () => {
     });
     expect(nonces).toHaveLength(50);
     expect(new Set(nonces).size).toBe(50);
-    const paid = jobs.flatMap((job) => (job.kind === "pay" ? [expectedPurchase(job.header)] : []));
+    const paid = jobs.flatMap((job) => (job.kind === "pay" ? [expectedPurchase(job.header, undefined)] : []));
     expect(
       e8()
-        .map((r) => r.rawBody)
+        .map((r) => withoutKey(r.rawBody))
         .sort(),
     ).toEqual(paid.sort());
+    expect(new Set(e8().map(keyOf)).size).toBe(paid.length);
     expect(e7()).toHaveLength(50);
     expect(reports).toEqual([]);
   });

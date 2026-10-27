@@ -6,6 +6,7 @@
  * `PAYMENT-SIGNATURE` (wins over a sign-in) → E7 for a fresh menu → match `accepted` → E8.
  * Fails closed: anything unreadable or unexpected is a 503, and nothing that may follow a
  * settled payment is ever a 402. Nothing here logs; `report` carries only sanitized errors. */
+import { randomBytes } from "node:crypto";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { LagoX402ErrorWhere, NormalizedConfig, NormalizedRoute } from "./config.js";
 import {
@@ -303,7 +304,9 @@ export class Gate {
   /** E8's body. `payment` is a deep copy with `resource` reset to this route's 402 resource and
    * `extensions.bazaar` set to the route's rendered extension (deleted when the route is not
    * discoverable, whatever the agent sent); every other key keeps its position and value.
-   * `payment_requirements` is `accepted` exactly as the agent sent it. */
+   * `payment_requirements` is `accepted` exactly as the agent sent it. `idempotency_key` is new
+   * for each paid request and never leaves the gate and Lago: Lago answers a payment it already
+   * recorded only to the request that carries the key it was recorded under. */
   #purchaseBody(route: NormalizedRoute, req: GateRequest, payment: PaymentPayload): unknown {
     const forwarded = JSON.parse(JSON.stringify(payment)) as Record<string, unknown>;
     forwarded.resource = this.#resource(route, req);
@@ -322,6 +325,7 @@ export class Gate {
         wallet: route.wallet,
         payment: forwarded,
         payment_requirements: payment.accepted,
+        idempotency_key: randomBytes(32).toString("base64url"),
       },
     };
   }
@@ -380,15 +384,12 @@ export class Gate {
 
   /** An E8 200. Money may have moved, so an unreadable answer is "pending", never a 402.
    *
-   * A settled replay is served on the retry only. Lago answers a payment it already settled
-   * from its row before checking anything else, for as long as it keeps the row, and finds that
-   * row by a digest that leaves the signature out: anyone who reads a settled authorization from
-   * the chain can present it again, under any signature, against a fresh 402, and would be
-   * served on the payer's subscription. On a request's first attempt a settled replay is
-   * therefore someone presenting a payment again (409 `payment_already_settled`, nothing billed
-   * or reported); on the retry it is this request's own payment, answered again after a lost
-   * answer, a 5xx or `credit_grant_failed`. A pending replay asks the agent to come back, like
-   * any pending purchase. */
+   * A settled replay is served on the retry only. Lago answers a payment it already recorded
+   * only under the `idempotency_key` of the request that recorded it, and refuses any other
+   * presentation with `payment_already_settled`, so a replay can only follow this request's own
+   * first attempt: a lost answer, a 5xx or `credit_grant_failed`. A replay on a first attempt
+   * is still refused (409 `payment_already_settled`, nothing billed or reported) in case Lago
+   * ever answers one. A pending replay asks the agent to come back, like any pending purchase. */
   #settled(purchase: Purchase, body: unknown, attempt: 1 | 2): GateOutcome {
     let settlement: ReturnType<typeof parseSettlement>;
     try {

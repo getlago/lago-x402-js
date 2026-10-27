@@ -4,8 +4,10 @@
  * and X402_BUYER_EVM_PRIVATE_KEY (a funded Base Sepolia buyer) are set. Optional, with the
  * defaults scripts/live-setup.mjs creates: LAGO_X402_CONNECTION_CODE, LIVE_PLAN_CODE,
  * LIVE_METRIC_CODE, LIVE_WALLET_CODE, LIVE_ORIGIN (http://localhost:4021), LIVE_TOP_UP_CENTS (3),
- * LIVE_WALLET_TIMEOUT_MS (420000), LIVE_EVENT_CLOCK_OFFSET_MS (5000). Run
- * `node scripts/live-setup.mjs` once first.
+ * LIVE_WALLET_TIMEOUT_MS (420000), LIVE_EVENT_CLOCK_OFFSET_MS (5000),
+ * LIVE_LOSE_FIRST_PURCHASE_ANSWER (unset; `1` has the proxy drop the answer to step 2's first
+ * credit purchase after Lago has processed it, so the middleware's own retry is answered from
+ * Lago's record and served). Run `node scripts/live-setup.mjs` once first.
  *
  * An Express app on LIVE_ORIGIN's port gates POST /live with `lagoX402`, whose `apiUrl` is a
  * loopback proxy that forwards everything to LAGO_API_URL unchanged and records the usage events
@@ -18,7 +20,8 @@
  *   2. an agent without the sign-in extension pays the top-up and is served with PAYMENT-RESPONSE
  *      (should Lago still be settling it, 503 payment_pending: the agent waits, then signs in);
  *   3. the same key with the sign-in extension is served from its credits and never pays;
- *   4. the paid call's PAYMENT-SIGNATURE, sent again, is refused 409 and neither served nor billed;
+ *   4. the paid call's PAYMENT-SIGNATURE, sent again, is refused by Lago (it carries another
+ *      request's key), answered 409, and neither served nor billed;
  *   5. ten gate checks, counting the distinct Solana fee payers they offer (they rotate);
  *   6. `x402.close()` drains; Lago has both events and bills both, and the wallet's ongoing usage
  *      rose.
@@ -89,6 +92,10 @@ interface Relay {
   /** Relative to LAGO_API_URL, without its query string. */
   path: string;
   status: number;
+  /** A credit purchase whose answer the proxy dropped after Lago had processed it. */
+  lost?: boolean;
+  /** A credit purchase answered from Lago's record of the payment. */
+  replayed?: boolean;
 }
 
 interface RelayedEvent {
@@ -118,11 +125,14 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 
 /** Forwards every request to `upstream` unchanged (method, path, query, Authorization, Accept,
  * Content-Type, body; never following a redirect) and answers with Lago's status, Content-Type and
- * body. Records each relay's method, path and status, and each usage event it relays. Logs nothing. */
-async function startRecordingProxy(upstream: URL): Promise<RecordingProxy> {
+ * body. Records each relay's method, path and status, whether a credit purchase was a replay, and
+ * each usage event it relays. With `loseFirstPurchaseAnswer`, the first credit purchase reaches
+ * Lago but its answer is dropped with the socket. Logs nothing. */
+async function startRecordingProxy(upstream: URL, loseFirstPurchaseAnswer: boolean): Promise<RecordingProxy> {
   const prefix = upstream.pathname.replace(/\/+$/, "");
   const relays: Relay[] = [];
   const events: RelayedEvent[] = [];
+  let losePurchaseAnswer = loseFirstPurchaseAnswer;
 
   async function relay(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const target = req.url ?? "/";
@@ -145,6 +155,19 @@ async function startRecordingProxy(upstream: URL): Promise<RecordingProxy> {
       });
       status = answer.status;
       const payload = Buffer.from(await answer.arrayBuffer());
+      if (method === "POST" && path === `${prefix}/x402/credit_purchases`) {
+        const replayed = replayedOf(status, payload);
+        if (losePurchaseAnswer) {
+          losePurchaseAnswer = false;
+          req.socket.destroy();
+          relays.push({ method, path: path.slice(prefix.length), status, lost: true, replayed });
+          return;
+        }
+        relays.push({ method, path: path.slice(prefix.length), status, replayed });
+        res.writeHead(status, { "content-type": answer.headers.get("content-type") ?? "application/json" });
+        res.end(payload);
+        return;
+      }
       const out: Record<string, string> = {};
       for (const name of ["content-type", "location"]) {
         const value = answer.headers.get(name);
@@ -177,6 +200,17 @@ async function startRecordingProxy(upstream: URL): Promise<RecordingProxy> {
       } catch {
         // Not an event the middleware sent; nothing to record.
       }
+    }
+  }
+
+  /** `replayed` of a 200 credit purchase; undefined for anything else. */
+  function replayedOf(status: number, payload: Buffer): boolean | undefined {
+    if (status !== 200) return undefined;
+    try {
+      const body = JSON.parse(payload.toString("utf8")) as { x402_settlement?: { replayed?: unknown } };
+      return body.x402_settlement?.replayed === true;
+    } catch {
+      return undefined;
     }
   }
 
@@ -315,6 +349,7 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
   let topUpCents: number;
   let walletTimeoutMs: number;
   let eventClockOffsetMs: number;
+  let loseFirstPurchaseAnswer: boolean;
   let api: URL;
   let account: PrivateKeyAccount;
   let proxy: RecordingProxy | undefined;
@@ -439,7 +474,8 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     api = apiBase(env.LAGO_API_URL ?? "");
     account = buyer();
     await terminateSubscription();
-    proxy = await startRecordingProxy(api);
+    loseFirstPurchaseAnswer = setting("LIVE_LOSE_FIRST_PURCHASE_ANSWER", "") === "1";
+    proxy = await startRecordingProxy(api, loseFirstPurchaseAnswer);
     x402 = await createLagoX402(
       {
         apiUrl: proxy.apiUrl,
@@ -513,12 +549,21 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
       [false, true],
     ]);
     state.payment = recorder.sent[1].get("payment-signature")!;
-    const purchases = () =>
-      proxy!.relays.slice(relaysFrom).filter((r) => r.path.endsWith("/x402/credit_purchases")).length;
+    const purchaseRelays = () =>
+      proxy!.relays.slice(relaysFrom).filter((r) => r.path.endsWith("/x402/credit_purchases"));
+    const purchases = () => purchaseRelays().length;
     // One paid call: its credit purchase, plus at most the middleware's one retry of it.
     const paidCallPurchases = purchases();
     expect(paidCallPurchases).toBeGreaterThanOrEqual(1);
     expect(paidCallPurchases).toBeLessThanOrEqual(2);
+    if (loseFirstPurchaseAnswer) {
+      // The first answer was lost after Lago had processed it; the retry, under the same key, is
+      // answered from Lago's record of the payment.
+      const [first, retry] = purchaseRelays();
+      expect(first.lost).toBe(true);
+      expect(retry).toMatchObject({ status: 200, replayed: true });
+      log("step 2: the first credit purchase's answer was lost; the retry was answered from Lago's record");
+    }
 
     if (await isPending(paid)) {
       // Lago is still settling: the credits are the agent's once it has, so it signs in for them.
@@ -587,11 +632,11 @@ describe.skipIf(!LIVE)("live: lago-x402 against a real Lago on Base Sepolia", ()
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("payment-response")).toBeNull();
     expect(await res.json()).toStrictEqual({ error: "payment_already_settled" });
-    // Lago answered the settled payment again from its row; the middleware refused to serve it.
+    // Lago refused the settled payment presented under a new request's key.
     const purchases = proxy!.relays
       .slice(relaysFrom)
       .filter((r) => r.path.endsWith("/x402/credit_purchases"));
-    expect(purchases.map((r) => r.status)).toStrictEqual([200]);
+    expect(purchases.map((r) => r.status)).toStrictEqual([422]);
     expect(newReports(from)).toStrictEqual([]);
     log("step 4: the paid call's payment, sent again, was refused 409 payment_already_settled");
   });

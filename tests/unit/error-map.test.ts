@@ -104,6 +104,12 @@ describe("mapGateCheckRefusal (E7)", () => {
     { name: "500", answer: { status: 500, body: "<html>" }, expected: unavailable, report: true },
     { name: "unknown 422 code", answer: v({ base: ["something_new"] }), expected: unavailable, report: true },
     {
+      name: "connection of the other environment",
+      answer: v({ connection_code: ["environment_not_enabled"] }),
+      expected: unavailable,
+      report: true,
+    },
+    {
       name: "payment field never challenges on E7",
       answer: v({ payment: ["invalid_exact_evm_signature"] }),
       expected: unavailable,
@@ -213,6 +219,12 @@ describe("mapCreditPurchaseRefusal (E8)", () => {
     {
       name: "unknown base code",
       answer: v({ base: ["something_new"] }),
+      expected: unavailable,
+      report: true,
+    },
+    {
+      name: "connection of the other environment",
+      answer: v({ connection_code: ["environment_not_enabled"] }),
       expected: unavailable,
       report: true,
     },

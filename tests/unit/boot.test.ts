@@ -436,6 +436,11 @@ describe("createLagoX402: refusals at boot", () => {
       { status: 404, body: notFound("connection") },
       "Lago gate_checks answered 404 (connection_not_found)",
     ],
+    [
+      "environment_not_enabled",
+      { status: 422, body: validationErrors({ connection_code: ["environment_not_enabled"] }) },
+      "Lago gate_checks answered 422 (validation_errors) [connection_code: environment_not_enabled]",
+    ],
     ["401", { status: 401, body: unauthorized() }, "Lago gate_checks answered 401"],
     [
       "403 feature_unavailable",

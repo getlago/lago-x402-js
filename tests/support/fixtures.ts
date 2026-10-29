@@ -1,5 +1,5 @@
 /** Answer bodies shaped exactly like lago-api's serializers and error renderers
- * (branch `feat/x402/gate-check-sign-in`). Each fixture cites the file it mirrors.
+ * (lago-api main). Each fixture cites the file it mirrors.
  * 32-byte hex values are built at runtime, never written as literals. */
 import { randomUUID } from "node:crypto";
 

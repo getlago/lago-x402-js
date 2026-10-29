@@ -36,7 +36,7 @@ export function retryAfterFrom(reconcileAfter: string | null, now: number): numb
   return Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(MIN_RETRY_AFTER_SECONDS, seconds));
 }
 
-// Codes below are verified against lago-api, branch feat/x402/gate-check-sign-in.
+// Codes below are verified against lago-api main.
 
 /** `base` codes meaning "the buyer is unknown and the connection does not auto-create".
  * Emitted by app/services/x402/gate_checks/check_service.rb (E7) and

@@ -1,5 +1,5 @@
 /** Line-by-line port of lago-api's `X402::SignInWithX::Message.build`
- * (`app/services/x402/sign_in_with_x/message.rb`, branch `feat/x402/gate-check-sign-in`).
+ * (`app/services/x402/sign_in_with_x/message.rb`, lago-api main).
  *
  * The cross-implementation tests verify the official client's signature over THIS text,
  * which proves Lago rebuilds exactly what the agent signed. Ruby semantics are kept on

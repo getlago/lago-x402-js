@@ -1,0 +1,31 @@
+.env
+.env.*
+.envrc
+.ca-bundle.pem
+logs.log
+.claude/
+
+# Node / TypeScript
+node_modules/
+*.tsbuildinfo
+dist/
+.turbo/
+.eslintcache
+
+# What `next build` writes into the Next.js integration fixture
+tests/integration/next-app/.next/
+tests/integration/next-app/next-env.d.ts
+
+# npm pack artifacts (created locally when verifying a tarball before publish)
+*.tgz
+# `npm run test:package` unpacks the tarball here (removed when it finishes)
+.package-check/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Captured payment material must never be committed
+*.capture*

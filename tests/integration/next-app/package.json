@@ -1,0 +1,8 @@
+{
+  "name": "lago-x402-next-fixture",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/react": "19.3.0"
+  }
+}

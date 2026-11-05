@@ -1,0 +1,120 @@
+{
+  "name": "lago-x402",
+  "version": "0.1.0",
+  "description": "Charge AI agents per call with x402 payments and Lago prepaid credits: middleware for Express, Hono and Next.js.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./express": {
+      "types": "./dist/express.d.ts",
+      "import": "./dist/express.js",
+      "default": "./dist/express.js"
+    },
+    "./hono": {
+      "types": "./dist/hono.d.ts",
+      "import": "./dist/hono.js",
+      "default": "./dist/hono.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js",
+      "default": "./dist/next.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^20.19 || >=22.12"
+  },
+  "license": "MIT",
+  "homepage": "https://www.getlago.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getlago/lago-x402-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/getlago/lago-x402-js/issues"
+  },
+  "keywords": [
+    "lago",
+    "x402",
+    "billing",
+    "payments",
+    "metering",
+    "prepaid-credits",
+    "usdc",
+    "ai-agents",
+    "middleware",
+    "express",
+    "hono",
+    "nextjs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:next": "vitest run --config vitest.integration.config.ts",
+    "test:package": "node scripts/check-package.mjs",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint src tests scripts",
+    "lint:fix": "eslint src tests scripts --fix",
+    "format": "prettier --write src tests scripts",
+    "format:check": "prettier --check src tests scripts"
+  },
+  "dependencies": {
+    "@x402/core": "^2.28.0"
+  },
+  "peerDependencies": {
+    "express": "^4.21.0 || ^5.0.0",
+    "hono": "^4.6.0",
+    "next": "^16.0.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "next": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@hono/node-server": "^2.1.5",
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.3.0",
+    "@x402/evm": "^2.28.0",
+    "@x402/extensions": "^2.28.0",
+    "@x402/fetch": "^2.28.0",
+    "eslint": "^10.3.0",
+    "express": "^5.2.1",
+    "express4": "npm:express@^4",
+    "hono": "^4.13.13",
+    "next": "^16.4.1",
+    "prettier": "^3.8.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tweetnacl": "^1.0.3",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.59.2",
+    "undici": "^6.28.0",
+    "viem": "2.57.7",
+    "vitest": "^4.1.11"
+  }
+}

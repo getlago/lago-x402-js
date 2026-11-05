@@ -486,7 +486,7 @@ npm run test:next      # a real `next build && next start` (after `npm run build
 
 Set Lago up once with `node scripts/live-setup.mjs`. It reads `LAGO_API_URL`, `LAGO_API_KEY`, `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`, `LIVE_EVM_PAYOUT` and, optionally, `LIVE_SVM_PAYOUT`, and creates the metric, the plan and the connection through Lago's API.
 
-Testnets only: the test refuses any offer outside Base Sepolia and Solana devnet, and each run spends one top-up (3¢ by default) of Base Sepolia USDC, which CDP's faucet provides. Keep the credentials in your shell environment, never in a file in this repository.
+Testnets only: the test refuses any offer outside Base Sepolia and Solana devnet, and each run spends one top-up (3¢ by default) of Base Sepolia USDC, which CDP's faucet provides. Put the credentials in your shell environment or in `tests/.env`, which `npm run test:live` loads when it exists. The file is git-ignored, and a variable already set in the shell wins. `node --env-file=tests/.env scripts/live-setup.mjs` reads the setup's variables from it too. Never commit credentials.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the rest.
 

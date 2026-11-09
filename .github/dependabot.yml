@@ -10,6 +10,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Never propose an action release younger than a week: these pins run in
+    # the release jobs, one of which mints npm's OIDC token, and a hijacked
+    # release is usually caught and pulled within days.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "ci"
     groups:

@@ -5,14 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The release gate: publish.yml calls this workflow, so a release passes
+  # exactly what CI runs. Its cache-mode: none also applies here, so a release
+  # run reads no cache.
+  workflow_call:
 
-permissions:
-  contents: read
+# Nothing by default; each job asks for what it needs.
+permissions: {}
 
 jobs:
   test:
     name: ${{ matrix.os }} · node${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -21,6 +27,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -53,11 +61,15 @@ jobs:
     # lago-x402/next in a real Next.js app: `next build && next start` against the fake Lago.
     name: next · ubuntu-latest · node22
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       NEXT_TELEMETRY_DISABLED: "1"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

@@ -10,6 +10,10 @@
  * `127.0.0.1` stays reachable on purpose. Some properties in this suite (timeouts,
  * redirects, socket behaviour) are only honestly tested against a real server. Allowing
  * loopback keeps those tests real while everything else is sealed.
+ *
+ * This needs undici 8 or later: Node 26's `fetch` (undici 8) reads only the
+ * `undici.globalDispatcher.2` slot, which undici 6 never sets, while Node 22's and 24's
+ * read `undici.globalDispatcher.1`. undici 8's `setGlobalDispatcher` sets both.
  */
 import { MockAgent, setGlobalDispatcher } from "undici";
 

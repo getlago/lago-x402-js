@@ -75,7 +75,7 @@
     "format:check": "prettier --check src tests scripts"
   },
   "dependencies": {
-    "@x402/core": "^2.28.0"
+    "@x402/core": "^2.29.0"
   },
   "peerDependencies": {
     "express": "^4.21.0 || ^5.0.0",
@@ -99,22 +99,22 @@
     "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "@types/react": "^19.3.0",
-    "@x402/evm": "^2.28.0",
-    "@x402/extensions": "^2.28.0",
-    "@x402/fetch": "^2.28.0",
-    "eslint": "^10.3.0",
-    "express": "^5.2.1",
+    "@x402/evm": "^2.29.0",
+    "@x402/extensions": "^2.29.0",
+    "@x402/fetch": "^2.29.0",
+    "eslint": "^10.14.0",
+    "express": "^5.3.0",
     "express4": "npm:express@^4",
-    "hono": "^4.13.13",
-    "next": "^16.4.1",
+    "hono": "^4.13.16",
+    "next": "^16.4.3",
     "prettier": "^3.8.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.5.0",
-    "typescript-eslint": "^8.59.2",
+    "typescript-eslint": "^8.72.1",
     "undici": "^6.28.0",
-    "viem": "2.57.7",
+    "viem": "2.57.14",
     "vitest": "^4.1.11"
   }
 }

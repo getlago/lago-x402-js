@@ -36,7 +36,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": "^20.19 || >=22.12"
+    "node": ">=22.12"
   },
   "license": "MIT",
   "homepage": "https://www.getlago.com",
@@ -97,7 +97,7 @@
     "@eslint/js": "^10.0.1",
     "@hono/node-server": "^2.1.5",
     "@types/express": "^5.0.6",
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",
     "@x402/evm": "^2.29.0",
     "@x402/extensions": "^2.29.0",

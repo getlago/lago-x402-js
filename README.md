@@ -44,7 +44,7 @@ Authored in TypeScript, ships compiled JavaScript with `.d.ts` types.
 npm install lago-x402
 ```
 
-Requires Node `^20.19` or `>=22.12`, plus one of `express` (4.21+ or 5), `hono` (4.6+) with `@hono/node-server`, or `next` (16). The package is ESM; a CommonJS app can `require()` it on those Node versions. Its one runtime dependency is `@x402/core`.
+Requires Node `>=22.12` (tested on 22, 24 and 26), plus one of `express` (4.21+ or 5), `hono` (4.6+) with `@hono/node-server`, or `next` (16). The package is ESM; a CommonJS app can `require()` it on those Node versions. Its one runtime dependency is `@x402/core`.
 
 With TypeScript and Express, also install `@types/express`: the types of `lago-x402/express` import Express's own.
 

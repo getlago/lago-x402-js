@@ -36,7 +36,14 @@
     "LICENSE"
   ],
   "engines": {
-    "node": "^20.19 || >=22.12"
+    "node": ">=22.12"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^22.19 || >=24",
+      "onFail": "warn"
+    }
   },
   "license": "MIT",
   "homepage": "https://www.getlago.com",
@@ -97,7 +104,7 @@
     "@eslint/js": "^10.0.1",
     "@hono/node-server": "^2.1.5",
     "@types/express": "^5.0.6",
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",
     "@x402/evm": "^2.29.0",
     "@x402/extensions": "^2.29.0",
@@ -113,7 +120,7 @@
     "tweetnacl": "^1.0.3",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.72.1",
-    "undici": "^6.28.0",
+    "undici": "^8.12.3",
     "viem": "2.57.14",
     "vitest": "^4.1.11"
   }

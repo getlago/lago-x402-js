@@ -8,6 +8,8 @@ cd lago-x402-js
 npm install
 ```
 
+Working on the package needs Node `^22.19 || >=24` (`devEngines` in `package.json`; npm warns on an older one). That is newer than the `>=22.12` the package supports (`engines`), because eslint and the unit tests' network guard (undici) need it. CI runs the package check on Node 22.12.0, so the supported minimum stays tested.
+
 ## Run tests
 
 ```bash

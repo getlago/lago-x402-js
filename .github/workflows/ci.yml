@@ -57,6 +57,36 @@ jobs:
       - name: Unit tests
         run: npm test
 
+  floor:
+    # The oldest Node that `engines` promises (keep it in step with package.json):
+    # the package as npm would publish it, loaded with require() and import().
+    # Lint and the unit tests need the newer Node in `devEngines` (eslint, and
+    # undici for the network guard), so the matrix above runs them.
+    name: package · ubuntu-latest · node22.12.0
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package check (npm pack, require() from CommonJS, import() from ESM)
+        run: npm run test:package
+
   next:
     # lago-x402/next in a real Next.js app: `next build && next start` against the fake Lago.
     name: next · ubuntu-latest · node22

@@ -5,7 +5,7 @@ This package is published to **npm** as [`lago-x402`](https://www.npmjs.com/pack
 Releases are triggered by pushing a `v*.*.*` git tag. The publish workflow (`.github/workflows/publish.yml`):
 
 1. Verifies the release: the repository is public, and the tag names the `X.Y.Z` version in `package.json` and a commit on `main`
-2. Runs the full CI gate, the same `ci.yml` pushes and pull requests run (Node 22, 24 and 26 on Ubuntu and macOS, and the Next.js integration)
+2. Runs the full CI gate, the same `ci.yml` pushes and pull requests run (Node 22, 24 and 26 on Ubuntu and macOS, the package check on Node 22.12.0, and the Next.js integration)
 3. Builds and packs the tarball once
 4. Publishes that tarball to npm with **OIDC trusted publishing** and a sigstore **provenance** attestation, after a maintainer approves
 5. Creates a GitHub Release with auto-generated notes and the same tarball

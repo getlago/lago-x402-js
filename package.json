@@ -113,7 +113,7 @@
     "express": "^5.3.0",
     "express4": "npm:express@^4",
     "hono": "^4.13.16",
-    "next": "^16.4.3",
+    "next": "^16.4.5",
     "prettier": "^3.8.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

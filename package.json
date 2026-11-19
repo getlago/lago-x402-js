@@ -120,7 +120,7 @@
     "tweetnacl": "^1.0.3",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.72.1",
-    "undici": "^8.12.3",
+    "undici": "^8.12.4",
     "viem": "2.57.14",
     "vitest": "^4.1.11"
   }

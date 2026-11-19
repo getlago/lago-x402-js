@@ -319,14 +319,16 @@ describe("hono", () => {
 
   describe("raw-socket request targets", () => {
     // [target, what @hono/node-server + Hono's router dispatch it to, the pathname the gate
-    // sees]: the gate or the catch-all, never the handler. Hono routes strictly (no trailing
-    // slash, case-sensitive), decodes unreserved escapes (`%70` is "p") before matching, and
-    // the server resolves dot segments and `\` while building `c.req.url`. Each target is sent
-    // with both methods the route is mounted for.
-    const TARGETS: [string, "gate" | "catch-all", string?][] = [
+    // sees]: the gate, the catch-all, or a 400 from the server itself, never the handler.
+    // Hono routes strictly (no trailing slash, case-sensitive), decodes unreserved escapes
+    // (`%70` is "p") before matching, and the server resolves dot segments while building
+    // `c.req.url`. Since 2.1.6 (GHSA-jpvv-r467-5p4w) the server refuses a raw `\` in the path
+    // with 400 before any routing, rather than turning it into `/`; an escaped `%5C` is still
+    // routed. Each target is sent with both methods the route is mounted for.
+    const TARGETS: [string, "gate" | "catch-all" | "rejected", string?][] = [
       ["/paid%2Fx", "catch-all"],
       ["/paid%5C", "catch-all"],
-      ["/paid\\", "catch-all"],
+      ["/paid\\", "rejected"],
       ["/paid/%0A", "catch-all"],
       ["/paid%0D", "catch-all"],
       ["/paid%E2%80%A8", "catch-all"],
@@ -363,6 +365,10 @@ describe("hono", () => {
         expect(e7()).toHaveLength(1);
         const pr = decodePaymentRequiredHeader(reply.headers["payment-required"]);
         expect(pr.resource.url).toBe(app.url + pathname);
+      } else if (dispatched === "rejected") {
+        expect(reply.status).toBe(400);
+        expect(reply.body).not.toBe(CATCH_ALL_BODY);
+        expect(e7()).toHaveLength(0);
       } else {
         expect(reply.status).toBe(200);
         expect(reply.body).toBe(CATCH_ALL_BODY);

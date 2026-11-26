@@ -4,6 +4,8 @@ All notable changes to this project will be documented here. Format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-26
+
 ### Added
 
 - `createLagoX402(config)`: validates the config, then checks every route against Lago before it serves. The billable metric must sum the `value` property (`sum_agg`, `field_name: "value"`, no expression, not recurring), and a gate check without sign-in must answer a challenge with sign-in chains (a lago-api with sign-in-with-x on gate checks). A route Lago refuses rejects the boot with one `LagoX402ConfigError` naming every refused route and its reason, reported first (`onError(err, "boot")` and the log line) so the refusal is never silent, even when the promise is only awaited by a request; an invalid config rejects at once and is not reported. A route Lago cannot be reached for (5xx, 408, 429, timeout, network error, facilitator outage) answers 503 `unavailable` and is retried in the background (1 s doubling to 60 s, on timers that never keep the process alive; a check in flight holds it until it ends, at most twice `gateCheckMs`) until it becomes active, or is refused for good if Lago then refuses it.
